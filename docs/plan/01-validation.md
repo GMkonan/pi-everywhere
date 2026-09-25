@@ -7,14 +7,14 @@ Confirm that the existing architecture is reliable before expanding the product 
 ## Planned work
 
 - [x] Manually test two simultaneous Pi TUI/tmux processes and verify commands reach only the selected `instanceId`.
-- [ ] Confirm session lifecycle commands reconnect cleanly:
+- [x] Confirm session lifecycle commands reconnect cleanly:
   - [x] `/reload`
   - [x] `/new`
-  - [ ] `/resume`
-  - [ ] `/fork`
-  - [ ] `/clone`
+  - [x] `/resume`
+  - [x] `/fork`
+  - [x] `/clone`
 - [ ] Test browser suspension and reconnection through Tailscale Serve on physical Android and iPhone devices.
-- [ ] Test large, cyclic, and custom tool-event serialization.
+- [x] Test large, cyclic, and custom tool-event serialization.
 - [x] Cover routing and authentication with two fake agents sharing one `sessionId`, browser state recovery, and socket replacement.
 - [x] Keep `instanceId` stable across extension reloads within the same Pi OS process.
 - [x] Harden serialization against large values, invalid dates, cyclic data, throwing getters, and hostile proxies.
@@ -27,7 +27,7 @@ These are recorded here so validation discoveries are not lost. They may be impl
 - [ ] Evict processes whose socket remains open but whose heartbeat becomes stale.
 - [ ] Preserve the selected process if the browser reconnects before extensions reconnect after a daemon restart.
 - [ ] Bound or split the initial multi-agent browser state message.
-- [ ] Add direct tests for snapshot entry-count and encoded-byte budgets.
+- [x] Add direct tests for snapshot entry-count and encoded-byte budgets.
 
 ## Completion signal
 
@@ -42,7 +42,9 @@ The current session lifecycle and reconnect behavior are understood, documented,
 - Sent a `snapshot` command to one selected `instanceId`; only that extension returned the snapshot and successful command result.
 - Ran `/reload` in the selected TUI and confirmed that its OS process and `instanceId` remained unchanged after reconnection.
 - Ran `/new` and confirmed that the session ID changed while the OS process and `instanceId` remained unchanged.
+- Exercised `/resume`, `/clone`, and `/fork` against isolated seeded sessions; every transition changed to the expected session while preserving the Pi PID and `instanceId`.
 - Sent no model prompts during these smoke tests.
+- Added direct snapshot-budget tests and a Unix-socket `BridgeClient` test carrying a large, cyclic custom-tool payload with invalid and throwing properties.
 
 ## Notes
 

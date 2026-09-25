@@ -3,11 +3,9 @@ import { BridgeClient } from "./bridge-client.ts";
 import { defaultSocketPath } from "../shared/paths.ts";
 import type { AgentCommand, AgentMeta, AgentSnapshot } from "../shared/protocol.ts";
 import { claimProcessRuntime, getProcessInstanceId } from "./process-identity.ts";
-import { toWireValue } from "./safe-serialize.ts";
+import { buildBoundedSnapshot } from "./snapshot.ts";
 
 const STATUS_KEY = "pi-everywhere";
-const MAX_HISTORY_ENTRIES = 200;
-const MAX_HISTORY_BYTES = 1_500_000;
 
 export default function piEverywhere(pi: ExtensionAPI) {
   const instanceId = getProcessInstanceId();
@@ -45,24 +43,7 @@ export default function piEverywhere(pi: ExtensionAPI) {
 
   const buildSnapshot = (): AgentSnapshot => {
     if (!activeContext) throw new Error("Pi session is not active");
-    const branch = activeContext.sessionManager.getBranch();
-    const candidates = toWireValue(branch.slice(-MAX_HISTORY_ENTRIES)) as unknown[];
-    const entries: unknown[] = [];
-    let bytes = 0;
-    for (let index = candidates.length - 1; index >= 0; index -= 1) {
-      const entry = candidates[index];
-      const entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8");
-      if (bytes + entryBytes > MAX_HISTORY_BYTES) break;
-      entries.unshift(entry);
-      bytes += entryBytes;
-    }
-    const omittedEntries = branch.length - entries.length;
-    return {
-      meta: buildMeta(),
-      entries,
-      capturedAt: Date.now(),
-      ...(omittedEntries > 0 ? { historyTruncated: true, omittedEntries } : {}),
-    };
+    return buildBoundedSnapshot(buildMeta(), activeContext.sessionManager.getBranch());
   };
 
   const handleCommand = async (command: AgentCommand): Promise<void> => {
