@@ -17,6 +17,7 @@ import {
   type AgentToServerMessage,
 } from "../shared/protocol.js";
 import { loadOrCreateToken, tokensEqual } from "./auth.js";
+import { buildBrowserStateMessages } from "./browser-state.js";
 import { CompletionTracker } from "./completion-tracker.js";
 import { evictStaleAgents } from "./liveness.js";
 import { PendingCommands } from "./pending-commands.js";
@@ -47,13 +48,25 @@ const completionTracker = new CompletionTracker();
 const browsers = new Set<WebSocket>();
 const webSocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES });
 
-function sendBrowser(socket: WebSocket, message: unknown): void {
-  if (socket.readyState !== WebSocket.OPEN) return;
+function sendBrowser(socket: WebSocket, message: unknown, onSent?: () => void): boolean {
+  if (socket.readyState !== WebSocket.OPEN) return false;
   if (socket.bufferedAmount > MAX_PENDING_BYTES) {
     socket.close(1013, "client is too slow");
-    return;
+    return false;
   }
-  socket.send(JSON.stringify(message));
+  const encoded = JSON.stringify(message);
+  if (Buffer.byteLength(encoded, "utf8") > MAX_PAYLOAD_BYTES) {
+    socket.close(1009, "message exceeds the browser payload limit");
+    return false;
+  }
+  socket.send(encoded, (error) => {
+    if (error) {
+      socket.close(1011, "browser message could not be sent");
+      return;
+    }
+    onSent?.();
+  });
+  return true;
 }
 
 function broadcast(message: unknown): void {
@@ -61,7 +74,17 @@ function broadcast(message: unknown): void {
 }
 
 function sendState(socket: WebSocket): void {
-  sendBrowser(socket, { v: PROTOCOL_VERSION, type: "state", agents: registry.listPublic() });
+  try {
+    const messages = buildBrowserStateMessages(registry.listPublic(), MAX_PAYLOAD_BYTES);
+    const sendNext = (index: number): void => {
+      const message = messages[index];
+      if (!message) return;
+      sendBrowser(socket, message, () => sendNext(index + 1));
+    };
+    sendNext(0);
+  } catch {
+    socket.close(1009, "agent metadata exceeds the browser payload limit");
+  }
 }
 
 const pendingCommands = new PendingCommands<WebSocket>((browser, result) => sendBrowser(browser, result));

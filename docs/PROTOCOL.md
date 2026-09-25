@@ -88,11 +88,13 @@ Commands:
 
 ## Daemon to browser
 
-On connect:
+On connect, the daemon sends one or more bounded state chunks:
 
 ```json
-{ "v": 1, "type": "state", "agents": [] }
+{ "v": 1, "type": "state", "agents": [], "reset": true, "complete": true }
 ```
+
+`reset: true` starts a fresh registry transfer. The browser accumulates later chunks where `reset` is false and finalizes only when `complete` is true. Incremental messages received during a chunked transfer are replayed after the final chunk so they cannot be overwritten by older snapshot data. Oversized per-agent history is trimmed from the oldest end and reports the additional omissions through normal snapshot truncation metadata.
 
 Incremental messages:
 

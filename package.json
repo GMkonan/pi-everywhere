@@ -23,8 +23,9 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/src/server/index.js",
     "typecheck": "tsc --noEmit",
+    "check:web": "node --check web/app.js && node --check web/markdown.js && node --check web/session-list.js && node --check web/sw.js",
     "test": "tsx --test test/*.test.ts",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm run check:web && npm test && npm run build"
   },
   "dependencies": {
     "web-push": "^3.6.7",

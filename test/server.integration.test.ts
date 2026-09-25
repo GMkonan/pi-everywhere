@@ -34,6 +34,7 @@ interface AgentOptions {
   sessionId?: string;
   cwd?: string;
   pid?: number;
+  entries?: unknown[];
 }
 
 function connectAgent(socketPath: string, instanceId: string, options: AgentOptions = {}): Promise<Socket> {
@@ -55,7 +56,7 @@ function connectAgent(socketPath: string, instanceId: string, options: AgentOpti
             thinkingLevel: "off",
             idle: true,
           },
-          entries: [],
+          entries: options.entries ?? [],
           capturedAt: Date.now(),
         },
       })}\n`);
@@ -99,7 +100,30 @@ function nextBrowserMessage(
   });
 }
 
-test("daemon authenticates browsers and isolates live processes sharing one session", { timeout: 15_000 }, async () => {
+function nextBrowserState(socket: WebSocket): Promise<Record<string, unknown>> {
+  return new Promise((resolveState, reject) => {
+    let agents: unknown[] = [];
+    let chunks = 0;
+    const timer = setTimeout(() => {
+      socket.off("message", onMessage);
+      reject(new Error("Timed out waiting for complete browser state"));
+    }, 5000);
+    function onMessage(data: WebSocket.RawData) {
+      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (message.type !== "state") return;
+      chunks += 1;
+      if (message.reset !== false) agents = [];
+      agents.push(...((message.agents as unknown[] | undefined) ?? []));
+      if (message.complete === false) return;
+      clearTimeout(timer);
+      socket.off("message", onMessage);
+      resolveState({ ...message, agents, reset: true, complete: true, chunks });
+    }
+    socket.on("message", onMessage);
+  });
+}
+
+test("daemon authenticates browsers and isolates live processes sharing one session", { timeout: 20_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-everywhere-server-"));
   const socketPath = join(directory, "bridge.sock");
   const tokenPath = join(directory, "token");
@@ -201,7 +225,9 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       message.type === "agent_upsert" &&
       (message.agent as Record<string, unknown> | undefined)?.instanceId === "agent-a"
     );
-    const agentA = await connectAgent(socketPath, "agent-a");
+    const agentA = await connectAgent(socketPath, "agent-a", {
+      entries: [{ type: "custom", data: "a".repeat(1_050_000) }],
+    });
     sockets.push(agentA);
     await upsertA;
 
@@ -209,7 +235,9 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       message.type === "agent_upsert" &&
       (message.agent as Record<string, unknown> | undefined)?.instanceId === "agent-b"
     );
-    const agentB = await connectAgent(socketPath, "agent-b");
+    const agentB = await connectAgent(socketPath, "agent-b", {
+      entries: [{ type: "custom", data: "b".repeat(1_050_000) }],
+    });
     sockets.push(agentB);
     await upsertB;
 
@@ -217,10 +245,13 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       `ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`,
       { origin: `http://127.0.0.1:${port}` },
     );
-    const recoveredState = nextBrowserMessage(reconnectingBrowser, (message) => message.type === "state");
+    const recoveredState = nextBrowserState(reconnectingBrowser);
     sockets.push(reconnectingBrowser);
     await once(reconnectingBrowser, "open");
     const state = await recoveredState;
+    assert.equal(state.reset, true);
+    assert.equal(state.complete, true);
+    assert.equal(state.chunks, 2);
     const stateAgents = state.agents as Array<{
       instanceId: string;
       lastSeenAt: number;
@@ -276,7 +307,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       `ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`,
       { origin: `http://127.0.0.1:${port}` },
     );
-    const refreshedState = nextBrowserMessage(livenessBrowser, (message) => message.type === "state");
+    const refreshedState = nextBrowserState(livenessBrowser);
     sockets.push(livenessBrowser);
     await once(livenessBrowser, "open");
     const refreshedAgents = (await refreshedState).agents as Array<{ instanceId: string; lastSeenAt: number }>;

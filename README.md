@@ -73,9 +73,10 @@ Notifications are opt-in from the bell button and require a secure browser conte
 npm run dev          # server with file watching
 npm run dev:server   # server once, through tsx
 npm run typecheck
+npm run check:web    # syntax-check dependency-free browser modules
 npm test
 npm run build
-npm run check        # typecheck + tests + build
+npm run check        # typecheck + web syntax + tests + build
 npm start            # run compiled server after npm run build
 ```
 

@@ -7,6 +7,7 @@ import {
 } from "./session-list.js";
 
 const PROTOCOL_VERSION = 1;
+const MAX_STATE_QUEUE_BYTES = 2 * 1024 * 1024;
 const WORKING_PHRASES = [
   "Forging code…",
   "Connecting the dots…",
@@ -21,7 +22,11 @@ let socket;
 let reconnectTimer;
 let selectedId;
 let selectedRemovalTimer;
+let restoreSelectedOnReconnect = false;
 let reconnectEnabled = true;
+let stateSyncing = false;
+let queuedServerMessages = [];
+let queuedServerMessageBytes = 0;
 let rebuildingTranscript = false;
 let workingSpinnerTimer;
 let workingPhraseTimer;
@@ -99,21 +104,45 @@ async function connect() {
 
 function handleServerMessage(message) {
   if (message.v !== PROTOCOL_VERSION) return;
+  if (message.type !== "state" && stateSyncing) {
+    const messageBytes = new TextEncoder().encode(JSON.stringify(message)).byteLength;
+    if (queuedServerMessages.length >= 1000 || queuedServerMessageBytes + messageBytes > MAX_STATE_QUEUE_BYTES) {
+      socket?.close(1013, "too many updates during state synchronization");
+      return;
+    }
+    queuedServerMessages.push(message);
+    queuedServerMessageBytes += messageBytes;
+    return;
+  }
   if (message.type === "state") {
-    agents.clear();
+    if (message.reset !== false) {
+      agents.clear();
+      queuedServerMessages = [];
+      queuedServerMessageBytes = 0;
+      stateSyncing = message.complete === false;
+    }
     for (const agent of message.agents ?? []) agents.set(agent.instanceId, agent);
-    if (selectedId && !agents.has(selectedId)) selectedId = undefined;
+    if (message.complete === false) return;
+    stateSyncing = false;
+
+    const selectedMissing = Boolean(selectedId && !agents.has(selectedId));
+    if (selectedMissing) scheduleSelectedRemoval(selectedId, true);
+    else clearSelectedRemoval();
     renderAgents();
-    renderSelected();
+    if (!selectedMissing) renderSelected();
     if (pendingSessionLink) {
       const target = pendingSessionLink;
       pendingSessionLink = undefined;
       history.replaceState({}, "", location.pathname);
       if (agents.has(target)) selectAgent(target);
       else showToast("That Pi session is no longer live.");
-    } else if (!selectedId) {
+    } else if (!selectedId || selectedMissing) {
       setNavigation(true);
     }
+    const queued = queuedServerMessages;
+    queuedServerMessages = [];
+    queuedServerMessageBytes = 0;
+    for (const queuedMessage of queued) handleServerMessage(queuedMessage);
     return;
   }
   if (message.type === "agent_upsert") {
@@ -125,10 +154,10 @@ function handleServerMessage(message) {
     renderAgents();
     if (selectedId === message.agent.instanceId) {
       const navigationWasOpen = !elements.navigation.classList.contains("closed");
-      clearTimeout(selectedRemovalTimer);
-      selectedRemovalTimer = undefined;
+      const shouldRestoreSelection = restoreSelectedOnReconnect;
+      clearSelectedRemoval();
       renderSelected();
-      setNavigation(navigationWasOpen);
+      setNavigation(shouldRestoreSelection ? false : navigationWasOpen);
     }
     return;
   }
@@ -141,15 +170,7 @@ function handleServerMessage(message) {
       // Keep the current conversation visible during a short bridge reconnect.
       // A busy extension can intentionally reconnect when a fresh snapshot meets
       // its backpressure cap; replacing the chat with the session index causes a flash.
-      clearTimeout(selectedRemovalTimer);
-      selectedRemovalTimer = setTimeout(() => {
-        if (selectedId === message.instanceId && !agents.has(message.instanceId)) {
-          selectedId = undefined;
-          renderAgents();
-          renderSelected();
-          setNavigation(true);
-        }
-      }, 5_000);
+      scheduleSelectedRemoval(message.instanceId, false);
     }
     return;
   }
@@ -218,9 +239,29 @@ function renderAgents() {
   }
 }
 
-function selectAgent(instanceId) {
+function clearSelectedRemoval() {
   clearTimeout(selectedRemovalTimer);
   selectedRemovalTimer = undefined;
+  restoreSelectedOnReconnect = false;
+}
+
+function scheduleSelectedRemoval(instanceId, restoreOnReconnect) {
+  clearSelectedRemoval();
+  restoreSelectedOnReconnect = restoreOnReconnect;
+  selectedRemovalTimer = setTimeout(() => {
+    selectedRemovalTimer = undefined;
+    if (selectedId === instanceId && !agents.has(instanceId)) {
+      selectedId = undefined;
+      restoreSelectedOnReconnect = false;
+      renderAgents();
+      renderSelected();
+      setNavigation(true);
+    }
+  }, 5_000);
+}
+
+function selectAgent(instanceId) {
+  clearSelectedRemoval();
   selectedId = instanceId;
   renderAgents();
   renderSelected();
