@@ -1,0 +1,49 @@
+# Phase 1 — Validate the current MVP
+
+## Goal
+
+Confirm that the existing architecture is reliable before expanding the product or migrating the UI.
+
+## Planned work
+
+- [x] Manually test two simultaneous Pi TUI/tmux processes and verify commands reach only the selected `instanceId`.
+- [ ] Confirm session lifecycle commands reconnect cleanly:
+  - [x] `/reload`
+  - [x] `/new`
+  - [ ] `/resume`
+  - [ ] `/fork`
+  - [ ] `/clone`
+- [ ] Test browser suspension and reconnection through Tailscale Serve on physical Android and iPhone devices.
+- [ ] Test large, cyclic, and custom tool-event serialization.
+- [x] Cover routing and authentication with two fake agents sharing one `sessionId`, browser state recovery, and socket replacement.
+- [x] Keep `instanceId` stable across extension reloads within the same Pi OS process.
+- [x] Harden serialization against large values, invalid dates, cyclic data, throwing getters, and hostile proxies.
+
+## Reliability findings to retain
+
+These are recorded here so validation discoveries are not lost. They may be implemented in this phase or moved deliberately when the active plan is revised.
+
+- [ ] Route extension command acknowledgements only to the browser that originated the command.
+- [ ] Evict processes whose socket remains open but whose heartbeat becomes stale.
+- [ ] Preserve the selected process if the browser reconnects before extensions reconnect after a daemon restart.
+- [ ] Bound or split the initial multi-agent browser state message.
+- [ ] Add direct tests for snapshot entry-count and encoded-byte budgets.
+
+## Completion signal
+
+The current session lifecycle and reconnect behavior are understood, documented, and reliable enough that a frontend migration will not hide transport bugs.
+
+## Validation log
+
+### 2026-09-25 — Pi 0.85.1 live-process smoke test
+
+- Started the daemon and two real Pi TUIs in separate detached tmux sessions.
+- Observed two distinct process IDs and `instanceId` values in the authenticated browser state.
+- Sent a `snapshot` command to one selected `instanceId`; only that extension returned the snapshot and successful command result.
+- Ran `/reload` in the selected TUI and confirmed that its OS process and `instanceId` remained unchanged after reconnection.
+- Ran `/new` and confirmed that the session ID changed while the OS process and `instanceId` remained unchanged.
+- Sent no model prompts during these smoke tests.
+
+## Notes
+
+Record discoveries here as testing progresses. Do not simulate attachment by opening the same session JSONL in a second Pi process.

@@ -1,0 +1,47 @@
+{
+  "name": "pi-everywhere-local",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Use the same live Pi process from its TUI and a mobile-friendly web interface.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-coding-agent",
+    "remote-ui"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extension/index.ts"
+    ]
+  },
+  "bin": {
+    "pi-everywhere": "./dist/src/server/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server/index.ts",
+    "dev:server": "tsx src/server/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/src/server/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7",
+    "ws": "^8.18.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@types/node": "^24.10.0",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

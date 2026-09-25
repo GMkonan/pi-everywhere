@@ -1,0 +1,792 @@
+import { renderMarkdown } from "./markdown.js";
+import {
+  agentActivityAt,
+  formatActivityTime,
+  groupAgentsByDate,
+  touchAgentActivity,
+} from "./session-list.js";
+
+const PROTOCOL_VERSION = 1;
+const WORKING_PHRASES = [
+  "Forging code…",
+  "Connecting the dots…",
+  "Shaping the answer…",
+  "Following the thread…",
+  "Working through it…",
+  "Almost there…",
+];
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const agents = new Map();
+let socket;
+let reconnectTimer;
+let selectedId;
+let selectedRemovalTimer;
+let reconnectEnabled = true;
+let rebuildingTranscript = false;
+let workingSpinnerTimer;
+let workingPhraseTimer;
+let toastTimer;
+let pendingSessionLink = new URLSearchParams(location.search).get("session");
+let transcriptState = createTranscriptState();
+
+const elements = {
+  agents: document.querySelector("#agents"),
+  agentCount: document.querySelector("#agent-count"),
+  connection: document.querySelector("#connection-status"),
+  connectionDot: document.querySelector("#connection-dot"),
+  navigation: document.querySelector("#session-index"),
+  openNavigation: document.querySelector("#open-navigation"),
+  closeNavigation: document.querySelector("#close-navigation"),
+  view: document.querySelector("#session-view"),
+  name: document.querySelector("#session-name"),
+  meta: document.querySelector("#session-meta"),
+  transcript: document.querySelector("#transcript"),
+  form: document.querySelector("#prompt-form"),
+  prompt: document.querySelector("#prompt"),
+  abort: document.querySelector("#abort"),
+  tokenDialog: document.querySelector("#token-dialog"),
+  tokenForm: document.querySelector("#token-form"),
+  token: document.querySelector("#token"),
+  changeToken: document.querySelector("#change-token"),
+  notifications: document.querySelector("#notifications"),
+  workingIndicator: document.querySelector("#working-indicator"),
+  workingSpinner: document.querySelector("#working-spinner"),
+  workingPhrase: document.querySelector("#working-phrase"),
+  toast: document.querySelector("#toast"),
+};
+
+async function connect() {
+  const token = sessionStorage.getItem("pi-everywhere-token");
+  if (!token) {
+    if (!elements.tokenDialog.open) elements.tokenDialog.showModal();
+    return;
+  }
+
+  clearTimeout(reconnectTimer);
+  setConnection("connecting");
+  try {
+    const response = await fetch("/api/auth", {
+      headers: { authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (response.status === 401) {
+      reconnectEnabled = false;
+      sessionStorage.removeItem("pi-everywhere-token");
+      setConnection("offline");
+      if (!elements.tokenDialog.open) elements.tokenDialog.showModal();
+      return;
+    }
+    if (!response.ok) throw new Error(`Authentication check failed: ${response.status}`);
+    void refreshNotificationState(true);
+  } catch {
+    setConnection("offline");
+    if (reconnectEnabled) reconnectTimer = setTimeout(() => void connect(), 2000);
+    return;
+  }
+
+  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+  socket = new WebSocket(`${scheme}//${location.host}/ws?token=${encodeURIComponent(token)}`);
+  socket.addEventListener("open", () => setConnection("online"));
+  socket.addEventListener("message", ({ data }) => {
+    try { handleServerMessage(JSON.parse(data)); }
+    catch { showSystem("Received an invalid message from the server."); }
+  });
+  socket.addEventListener("close", () => {
+    setConnection("offline");
+    if (reconnectEnabled) reconnectTimer = setTimeout(() => void connect(), 2000);
+  });
+}
+
+function handleServerMessage(message) {
+  if (message.v !== PROTOCOL_VERSION) return;
+  if (message.type === "state") {
+    agents.clear();
+    for (const agent of message.agents ?? []) agents.set(agent.instanceId, agent);
+    if (selectedId && !agents.has(selectedId)) selectedId = undefined;
+    renderAgents();
+    renderSelected();
+    if (pendingSessionLink) {
+      const target = pendingSessionLink;
+      pendingSessionLink = undefined;
+      history.replaceState({}, "", location.pathname);
+      if (agents.has(target)) selectAgent(target);
+      else showToast("That Pi session is no longer live.");
+    } else if (!selectedId) {
+      setNavigation(true);
+    }
+    return;
+  }
+  if (message.type === "agent_upsert") {
+    const previous = agents.get(message.agent.instanceId);
+    if (previous?.lastActivityAt) {
+      message.agent.lastActivityAt = Math.max(previous.lastActivityAt, agentActivityAt(message.agent));
+    }
+    agents.set(message.agent.instanceId, message.agent);
+    renderAgents();
+    if (selectedId === message.agent.instanceId) {
+      const navigationWasOpen = !elements.navigation.classList.contains("closed");
+      clearTimeout(selectedRemovalTimer);
+      selectedRemovalTimer = undefined;
+      renderSelected();
+      setNavigation(navigationWasOpen);
+    }
+    return;
+  }
+  if (message.type === "agent_removed") {
+    agents.delete(message.instanceId);
+    const selectedWasRemoved = selectedId === message.instanceId;
+    renderAgents();
+    if (!selectedWasRemoved) renderSelected();
+    if (selectedWasRemoved) {
+      // Keep the current conversation visible during a short bridge reconnect.
+      // A busy extension can intentionally reconnect when a fresh snapshot meets
+      // its backpressure cap; replacing the chat with the session index causes a flash.
+      clearTimeout(selectedRemovalTimer);
+      selectedRemovalTimer = setTimeout(() => {
+        if (selectedId === message.instanceId && !agents.has(message.instanceId)) {
+          selectedId = undefined;
+          renderAgents();
+          renderSelected();
+          setNavigation(true);
+        }
+      }, 5_000);
+    }
+    return;
+  }
+  if (message.type === "agent_event") {
+    const agent = agents.get(message.instanceId);
+    if (agent) {
+      let listChanged = touchAgentActivity(agent, message.event);
+      if (message.event?.type === "agent_start" && agent.meta.idle) {
+        agent.meta.idle = false;
+        listChanged = true;
+      }
+      if (message.event?.type === "agent_settled" && !agent.meta.idle) {
+        agent.meta.idle = true;
+        listChanged = true;
+      }
+      if (listChanged) renderAgents();
+      if (selectedId === message.instanceId) syncWorkingIndicator();
+    }
+    if (selectedId === message.instanceId) applyEvent(message.event);
+    return;
+  }
+  if (message.type === "command_result" && selectedId === message.instanceId && !message.ok) {
+    showSystem(`Command failed: ${message.error ?? "unknown error"}`);
+  }
+  if (message.type === "error") showSystem(`Bridge error: ${message.error}`);
+}
+
+function renderAgents() {
+  elements.agentCount.textContent = `${agents.size} live`;
+  elements.agents.replaceChildren();
+
+  if (agents.size === 0) {
+    const empty = div("No live Pi sessions. Start Pi with the extension loaded to see it here.", "sessions-empty");
+    elements.agents.append(empty);
+    return;
+  }
+
+  for (const group of groupAgentsByDate(agents.values())) {
+    const section = document.createElement("section");
+    section.className = "session-group";
+    const heading = document.createElement("h2");
+    heading.textContent = group.label;
+    section.append(heading);
+
+    for (const agent of group.agents) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `session-row${agent.instanceId === selectedId ? " selected" : ""}`;
+      const name = sessionName(agent);
+      const icon = div("π", `session-icon${agent.meta.idle ? "" : " working"}`);
+      const summary = div("", "session-summary");
+      summary.append(
+        element("strong", name),
+        element("small", `${basename(agent.meta.cwd) || agent.meta.cwd} · ${agent.meta.idle ? "idle" : "working"}`),
+      );
+      const time = document.createElement("time");
+      const activity = agentActivityAt(agent);
+      time.dateTime = new Date(activity).toISOString();
+      time.textContent = formatActivityTime(activity);
+      button.append(icon, summary, time);
+      button.title = agent.meta.cwd;
+      button.addEventListener("click", () => selectAgent(agent.instanceId));
+      section.append(button);
+    }
+    elements.agents.append(section);
+  }
+}
+
+function selectAgent(instanceId) {
+  clearTimeout(selectedRemovalTimer);
+  selectedRemovalTimer = undefined;
+  selectedId = instanceId;
+  renderAgents();
+  renderSelected();
+  setNavigation(false);
+  sendCommand("snapshot");
+}
+
+function setNavigation(open) {
+  const hasSelectedAgent = Boolean(selectedId && agents.has(selectedId));
+  const visible = open || !hasSelectedAgent;
+  elements.navigation.classList.toggle("closed", !visible);
+  elements.navigation.setAttribute("aria-hidden", String(!visible));
+  elements.navigation.inert = !visible;
+  elements.view.inert = visible;
+  elements.view.setAttribute("aria-hidden", String(visible || !hasSelectedAgent));
+  elements.closeNavigation.hidden = !hasSelectedAgent;
+}
+
+function renderSelected() {
+  const agent = selectedId ? agents.get(selectedId) : undefined;
+  elements.view.hidden = !agent;
+  if (!agent) {
+    syncWorkingIndicator();
+    return;
+  }
+
+  elements.name.textContent = sessionName(agent);
+  const model = agent.meta.model?.split("/").at(-1) || "unknown model";
+  elements.meta.textContent = `${basename(agent.meta.cwd) || agent.meta.cwd} · ${model}`;
+  elements.meta.title = `${agent.meta.cwd} · PID ${agent.meta.pid} · ${agent.meta.model || "unknown model"}`;
+  elements.transcript.replaceChildren();
+  transcriptState = createTranscriptState();
+  rebuildingTranscript = true;
+  try {
+    if (agent.snapshot?.historyTruncated) {
+      appendActivityText(`${agent.snapshot.omittedEntries ?? "Some"} older history entries were omitted.`, { status: true });
+    }
+    for (const entry of agent.snapshot?.entries ?? []) renderEntry(entry);
+  } finally {
+    rebuildingTranscript = false;
+  }
+  syncWorkingIndicator();
+  scrollToBottom();
+}
+
+function renderEntry(entry) {
+  if (entry?.type === "message" && entry.message) renderMessage(entry.message);
+  else if (entry?.type === "compaction") appendActivityText(`Conversation compacted (${entry.tokensBefore ?? "?"} tokens).`, { status: true });
+  else if (entry?.type === "branch_summary") appendActivityText(`Branch summary: ${entry.summary ?? ""}`, { markdown: true });
+}
+
+function renderMessage(message) {
+  if (message.role === "user") appendUserMessage(message);
+  else if (message.role === "assistant") appendAssistantMessage(message);
+  else if (message.role === "toolResult") applyToolResult(message);
+  else if (message.role === "bashExecution") {
+    upsertTool({ name: "bash", args: { command: message.command }, status: "done" });
+  } else if (message.role === "custom" && message.display !== false) {
+    appendActivityText(contentText(message.content), { markdown: true, status: true });
+  }
+}
+
+function appendUserMessage(message) {
+  clearAssistantStream();
+  const bubble = document.createElement("article");
+  bubble.className = "user-message";
+  const label = div("You", "user-label");
+  const content = div("", "message-content markdown");
+  content.append(renderMarkdown(contentText(message.content)));
+  bubble.append(label, content);
+  elements.transcript.append(bubble);
+  transcriptState.activitySinceUser = false;
+  scrollToBottom();
+}
+
+function appendAssistantMessage(message) {
+  const blocks = normalizeAssistantContent(message.content);
+  const intermediate = message.stopReason === "toolUse" || blocks.some((block) => block.type === "toolCall");
+  const finalText = [];
+
+  for (const block of blocks) {
+    if (block.type === "thinking" && block.thinking) {
+      appendActivityText(block.thinking, { markdown: true, thinking: true });
+    } else if (block.type === "toolCall") {
+      upsertTool({ id: block.id, name: block.name, args: block.arguments, status: "pending" });
+    } else if (block.type === "text" && block.text) {
+      if (intermediate) appendActivityText(block.text, { markdown: true });
+      else finalText.push(block.text);
+    }
+  }
+
+  if (finalText.length > 0) appendAnswer(finalText.join("\n"));
+  else if (["error", "aborted"].includes(message.stopReason)) {
+    appendActivityText(message.stopReason === "aborted" ? "Response stopped." : "The model returned an error.", { status: true, error: true });
+  }
+}
+
+function normalizeAssistantContent(content) {
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  return Array.isArray(content) ? content : [];
+}
+
+function appendActivityText(text, options = {}) {
+  if (!text) return undefined;
+  const node = document.createElement("div");
+  node.className = `activity-copy message-content${options.thinking ? " thinking" : ""}${options.status ? " status-copy" : ""}${options.error ? " error" : ""}`;
+  if (options.markdown) {
+    node.classList.add("markdown");
+    node.append(renderMarkdown(text));
+  } else {
+    node.classList.add("plain-text");
+    node.textContent = text;
+  }
+  elements.transcript.append(node);
+  transcriptState.activitySinceUser = true;
+  scrollToBottom();
+  return node;
+}
+
+function appendAnswer(text) {
+  if (!text) return;
+  if (transcriptState.activitySinceUser) appendSeparator();
+  const answer = document.createElement("article");
+  answer.className = "assistant-answer";
+  const content = div("", "message-content markdown");
+  content.append(renderMarkdown(text));
+  answer.append(content);
+  elements.transcript.append(answer);
+  transcriptState.activitySinceUser = false;
+  scrollToBottom();
+}
+
+function appendSeparator(streaming = false) {
+  const separator = document.createElement("div");
+  separator.className = "answer-separator";
+  separator.setAttribute("role", "separator");
+  if (streaming) separator.dataset.streaming = "true";
+  elements.transcript.append(separator);
+  return separator;
+}
+
+function upsertTool({ id, name, args, status }) {
+  let row = id ? transcriptState.tools.get(id) : undefined;
+  if (!row) {
+    row = document.createElement("div");
+    row.className = "activity-row";
+    const icon = div(toolIcon(name), "activity-icon");
+    const label = div(toolLabel(name), "activity-tool");
+    const detail = div("", "activity-detail");
+    const state = div("", "activity-state");
+    row.append(icon, label, detail, state);
+    elements.transcript.append(row);
+    if (id) transcriptState.tools.set(id, row);
+  }
+
+  const detail = row.querySelector(".activity-detail");
+  const summary = summarizeToolArgs(name, args);
+  if (summary) detail.textContent = summary;
+  row.classList.remove("pending", "running", "done", "error");
+  row.classList.add(status || "pending");
+  row.querySelector(".activity-state").textContent = status === "running" ? "●" : status === "error" ? "!" : status === "done" ? "✓" : "";
+  transcriptState.activitySinceUser = true;
+  scrollToBottom();
+  return row;
+}
+
+function applyToolResult(message) {
+  const row = message.toolCallId ? transcriptState.tools.get(message.toolCallId) : undefined;
+  if (row) {
+    row.classList.remove("pending", "running", "done", "error");
+    row.classList.add(message.isError ? "error" : "done");
+    row.querySelector(".activity-state").textContent = message.isError ? "!" : "✓";
+    if (message.isError) {
+      const detail = row.querySelector(".activity-detail");
+      detail.textContent = truncateLine(contentText(message.content), 220) || detail.textContent;
+    }
+  } else if (message.isError) {
+    const created = upsertTool({ id: message.toolCallId, name: message.toolName || "tool", status: "error" });
+    created.querySelector(".activity-detail").textContent = truncateLine(contentText(message.content), 220);
+  }
+}
+
+function applyEvent(event) {
+  if (!event?.type) return;
+  if (event.type === "message_start") {
+    if (event.message?.role === "user") appendUserMessage(event.message);
+    else if (event.message?.role === "assistant") startAssistantStream();
+    return;
+  }
+  if (event.type === "message_update") {
+    applyAssistantDelta(event.assistantMessageEvent);
+    return;
+  }
+  if (event.type === "message_end") {
+    if (event.message?.role === "assistant") {
+      clearAssistantStream();
+      appendAssistantMessage(event.message);
+    } else if (event.message?.role === "toolResult") {
+      applyToolResult(event.message);
+    }
+    return;
+  }
+  if (event.type === "tool_execution_start") {
+    upsertTool({ id: event.toolCallId, name: event.toolName, args: event.args, status: "running" });
+    return;
+  }
+  if (event.type === "tool_execution_end") {
+    const row = upsertTool({ id: event.toolCallId, name: event.toolName, args: event.args, status: event.isError ? "error" : "done" });
+    if (event.isError && event.result) {
+      row.querySelector(".activity-detail").textContent = truncateLine(contentText(event.result?.content ?? event.result), 220);
+    }
+  }
+}
+
+function startAssistantStream() {
+  clearAssistantStream();
+  transcriptState.stream = {
+    activityBefore: transcriptState.activitySinceUser,
+    nodes: [],
+    blocks: new Map(),
+    hasSeparator: false,
+  };
+}
+
+function applyAssistantDelta(delta) {
+  if (!delta?.type) return;
+  if (!transcriptState.stream) startAssistantStream();
+  const stream = transcriptState.stream;
+  const index = Number.isInteger(delta.contentIndex) ? delta.contentIndex : 0;
+
+  if (["thinking_start", "thinking_delta", "thinking_end"].includes(delta.type)) {
+    const node = ensureStreamBlock("thinking", index);
+    if (delta.type === "thinking_delta") node.textContent += delta.delta ?? "";
+    if (delta.type === "thinking_end" && typeof delta.content === "string") node.textContent = delta.content;
+    transcriptState.activitySinceUser = true;
+    scrollToBottom();
+    return;
+  }
+
+  if (["text_start", "text_delta", "text_end"].includes(delta.type)) {
+    if (transcriptState.activitySinceUser && !stream.hasSeparator) {
+      const separator = appendSeparator(true);
+      stream.nodes.push(separator);
+      stream.hasSeparator = true;
+    }
+    const node = ensureStreamBlock("text", index);
+    if (delta.type === "text_delta") node.textContent += delta.delta ?? "";
+    if (delta.type === "text_end" && typeof delta.content === "string") node.textContent = delta.content;
+    scrollToBottom();
+  }
+}
+
+function ensureStreamBlock(kind, index) {
+  const stream = transcriptState.stream;
+  const key = `${kind}:${index}`;
+  let content = stream.blocks.get(key);
+  if (content) return content;
+
+  const wrapper = document.createElement(kind === "thinking" ? "div" : "article");
+  wrapper.className = kind === "thinking" ? "activity-copy thinking streaming" : "assistant-answer streaming";
+  content = div("", "message-content plain-text");
+  wrapper.append(content);
+  elements.transcript.append(wrapper);
+  stream.blocks.set(key, content);
+  stream.nodes.push(wrapper);
+  return content;
+}
+
+function clearAssistantStream() {
+  const stream = transcriptState.stream;
+  if (!stream) return;
+  for (const node of stream.nodes) node.remove();
+  transcriptState.activitySinceUser = stream.activityBefore;
+  transcriptState.stream = undefined;
+}
+
+function createTranscriptState() {
+  return {
+    activitySinceUser: false,
+    stream: undefined,
+    tools: new Map(),
+  };
+}
+
+function showSystem(text) {
+  if (selectedId) appendActivityText(text, { status: true, error: true });
+}
+
+function sendCommand(command, payload) {
+  if (!selectedId || socket?.readyState !== WebSocket.OPEN) {
+    showSystem("Not connected. Your message was not sent.");
+    return false;
+  }
+  socket.send(JSON.stringify({
+    v: PROTOCOL_VERSION,
+    type: "command",
+    instanceId: selectedId,
+    commandId: crypto.randomUUID(),
+    command,
+    ...(payload ? { payload } : {}),
+  }));
+  return true;
+}
+
+elements.form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const text = elements.prompt.value.trim();
+  if (!text) return;
+  if (sendCommand("prompt", { text, behavior: "followUp" })) {
+    elements.prompt.value = "";
+    resizePrompt();
+  }
+});
+
+elements.prompt.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    elements.form.requestSubmit();
+  }
+});
+elements.prompt.addEventListener("input", resizePrompt);
+elements.openNavigation.addEventListener("click", () => setNavigation(true));
+elements.closeNavigation.addEventListener("click", () => setNavigation(false));
+elements.abort.addEventListener("click", () => sendCommand("abort"));
+elements.changeToken.addEventListener("click", () => {
+  reconnectEnabled = false;
+  socket?.close();
+  sessionStorage.removeItem("pi-everywhere-token");
+  elements.token.value = "";
+  elements.tokenDialog.showModal();
+});
+
+elements.tokenForm.addEventListener("submit", () => {
+  const token = elements.token.value.trim();
+  if (!token) return;
+  sessionStorage.setItem("pi-everywhere-token", token);
+  reconnectEnabled = true;
+  setTimeout(() => void connect(), 0);
+});
+elements.notifications.addEventListener("click", () => void toggleNotifications());
+
+function syncWorkingIndicator() {
+  const agent = selectedId ? agents.get(selectedId) : undefined;
+  const working = Boolean(agent && !agent.meta.idle);
+  const wasHidden = elements.workingIndicator.hidden;
+  const wasNearBottom = elements.transcript.scrollHeight - elements.transcript.scrollTop - elements.transcript.clientHeight < 80;
+  elements.workingIndicator.hidden = !working;
+
+  if (!working) {
+    clearInterval(workingSpinnerTimer);
+    clearInterval(workingPhraseTimer);
+    workingSpinnerTimer = undefined;
+    workingPhraseTimer = undefined;
+    return;
+  }
+  if (!wasHidden || workingSpinnerTimer || workingPhraseTimer) return;
+
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  elements.workingSpinner.textContent = reduceMotion ? "●" : SPINNER_FRAMES[0];
+  elements.workingPhrase.textContent = WORKING_PHRASES[Math.floor(Math.random() * WORKING_PHRASES.length)];
+  if (!reduceMotion) {
+    let spinnerIndex = 0;
+    let phraseIndex = Math.floor(Math.random() * WORKING_PHRASES.length);
+    workingSpinnerTimer = setInterval(() => {
+      spinnerIndex = (spinnerIndex + 1) % SPINNER_FRAMES.length;
+      elements.workingSpinner.textContent = SPINNER_FRAMES[spinnerIndex];
+    }, 90);
+    workingPhraseTimer = setInterval(() => {
+      phraseIndex = (phraseIndex + 1) % WORKING_PHRASES.length;
+      elements.workingPhrase.textContent = WORKING_PHRASES[phraseIndex];
+    }, 4_800);
+  }
+  if (wasNearBottom) scrollToBottom();
+}
+
+async function toggleNotifications() {
+  if (!notificationsSupported()) return;
+  elements.notifications.disabled = true;
+  let createdSubscription;
+  let registrationConfirmed = false;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const existing = await registration.pushManager.getSubscription();
+    if (existing) {
+      const response = await authenticatedFetch("/api/push/subscription", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: existing.endpoint }),
+      });
+      if (!response.ok) throw new Error("Could not disable notifications");
+      await existing.unsubscribe();
+      showToast("Notifications disabled.");
+    } else {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        showToast("Notification permission was not granted.");
+        return;
+      }
+      const keyResponse = await authenticatedFetch("/api/push/public-key");
+      if (!keyResponse.ok) throw new Error("Could not load the notification key");
+      const { publicKey } = await keyResponse.json();
+      createdSubscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: base64UrlToBytes(publicKey),
+      });
+      const response = await authenticatedFetch("/api/push/subscription", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(createdSubscription.toJSON()),
+      });
+      if (!response.ok) throw new Error("Could not register notifications");
+      registrationConfirmed = true;
+      showToast("Notifications enabled.");
+    }
+  } catch (error) {
+    if (createdSubscription && !registrationConfirmed) {
+      try { await createdSubscription.unsubscribe(); }
+      catch {}
+    }
+    showToast(error instanceof Error ? error.message : "Could not update notifications.");
+  } finally {
+    elements.notifications.disabled = false;
+    await refreshNotificationState(false);
+  }
+}
+
+async function refreshNotificationState(syncWithServer) {
+  if (!notificationsSupported()) {
+    elements.notifications.hidden = true;
+    return;
+  }
+  let localSubscription;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    localSubscription = await registration.pushManager.getSubscription();
+    let confirmed = Boolean(localSubscription && Notification.permission === "granted");
+    if (confirmed && syncWithServer) {
+      const response = await authenticatedFetch("/api/push/subscription", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(localSubscription.toJSON()),
+      });
+      confirmed = response.ok;
+    }
+    elements.notifications.classList.toggle("active", confirmed);
+    elements.notifications.classList.toggle("warning", Boolean(localSubscription) && !confirmed);
+    const label = confirmed ? "Disable notifications" : localSubscription ? "Notifications need attention" : "Enable notifications";
+    elements.notifications.setAttribute("aria-label", label);
+    elements.notifications.title = label;
+  } catch {
+    elements.notifications.classList.remove("active");
+    elements.notifications.classList.toggle("warning", Boolean(localSubscription));
+  }
+}
+
+function notificationsSupported() {
+  return isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+function authenticatedFetch(path, options = {}) {
+  const token = sessionStorage.getItem("pi-everywhere-token");
+  return fetch(path, {
+    ...options,
+    cache: "no-store",
+    headers: {
+      ...(options.headers ?? {}),
+      authorization: `Bearer ${token ?? ""}`,
+    },
+  });
+}
+
+function base64UrlToBytes(value) {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const binary = atob(value.replace(/-/g, "+").replace(/_/g, "/") + padding);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function showToast(text) {
+  clearTimeout(toastTimer);
+  elements.toast.textContent = text;
+  elements.toast.hidden = false;
+  toastTimer = setTimeout(() => { elements.toast.hidden = true; }, 3_500);
+}
+
+function setConnection(status) {
+  elements.connection.textContent = status;
+  elements.connectionDot.className = `connection-dot ${status === "online" ? "online" : "offline"}`;
+}
+
+function resizePrompt() {
+  elements.prompt.style.height = "auto";
+  elements.prompt.style.height = `${Math.min(elements.prompt.scrollHeight, 180)}px`;
+}
+
+function contentText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((block) => {
+    if (block?.type === "text") return block.text || "";
+    if (block?.type === "thinking") return block.thinking || "";
+    if (block?.type === "image") return `[image: ${block.mimeType || "unknown"}]`;
+    return "";
+  }).filter(Boolean).join("\n");
+}
+
+function summarizeToolArgs(name, args) {
+  if (!args || typeof args !== "object") return "";
+  const lowered = String(name || "").toLowerCase();
+  let value;
+  if (lowered === "bash" || lowered.includes("shell")) value = args.command;
+  else if (["read", "write", "edit"].includes(lowered)) value = args.path ?? args.filePath ?? args.file_path;
+  else if (lowered.includes("search")) value = args.query ?? args.queries ?? args.pattern;
+  else value = args.path ?? args.command ?? args.query ?? args.url;
+  if (Array.isArray(value)) value = value.join(" · ");
+  if (value === undefined) {
+    try { value = JSON.stringify(args); }
+    catch { value = ""; }
+  }
+  return truncateLine(String(value || ""), 240);
+}
+
+function toolLabel(name) {
+  const labels = { bash: "Shell", read: "Read", write: "Write", edit: "Edit" };
+  const value = String(name || "tool");
+  return labels[value.toLowerCase()] || value.replace(/(^|[_-])\w/g, (match) => match.replace(/[_-]/, "").toUpperCase());
+}
+
+function toolIcon(name) {
+  const value = String(name || "").toLowerCase();
+  if (value === "bash" || value.includes("shell")) return ">_";
+  if (value === "read") return "□";
+  if (["write", "edit"].includes(value)) return "✎";
+  if (value.includes("search")) return "⌕";
+  return "◇";
+}
+
+function truncateLine(value, maximum) {
+  const line = String(value || "").replace(/\s+/g, " ").trim();
+  return line.length > maximum ? `${line.slice(0, maximum - 1)}…` : line;
+}
+
+function sessionName(agent) {
+  return agent.meta.sessionName || basename(agent.meta.cwd) || `Pi ${agent.meta.pid}`;
+}
+
+function basename(path) {
+  return path?.split("/").filter(Boolean).at(-1) || path;
+}
+
+function div(text, className) {
+  return element("div", text, className);
+}
+
+function element(tagName, text, className = "") {
+  const node = document.createElement(tagName);
+  node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+function scrollToBottom() {
+  if (rebuildingTranscript) return;
+  elements.transcript.scrollTop = elements.transcript.scrollHeight;
+  requestAnimationFrame(() => { elements.transcript.scrollTop = elements.transcript.scrollHeight; });
+}
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+setNavigation(true);
+void connect();
