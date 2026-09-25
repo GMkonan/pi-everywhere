@@ -18,12 +18,16 @@ import {
 } from "../shared/protocol.js";
 import { loadOrCreateToken, tokensEqual } from "./auth.js";
 import { CompletionTracker } from "./completion-tracker.js";
+import { evictStaleAgents } from "./liveness.js";
+import { PendingCommands } from "./pending-commands.js";
 import { PushService, PushSubscriptionLimitError } from "./push-service.js";
 import { AgentRegistry } from "./registry.js";
 import { findProjectRoot, serveStatic } from "./static-files.js";
 
 const MAX_PAYLOAD_BYTES = 2 * 1024 * 1024;
 const MAX_PENDING_BYTES = 512 * 1024;
+const HEARTBEAT_TIMEOUT_MS = 45_000;
+const HEARTBEAT_SWEEP_MS = 15_000;
 const host = process.env.PI_EVERYWHERE_HOST ?? "127.0.0.1";
 const port = Number.parseInt(process.env.PI_EVERYWHERE_PORT ?? "8484", 10);
 const socketPath = process.env.PI_EVERYWHERE_SOCKET ?? defaultSocketPath();
@@ -59,6 +63,16 @@ function broadcast(message: unknown): void {
 function sendState(socket: WebSocket): void {
   sendBrowser(socket, { v: PROTOCOL_VERSION, type: "state", agents: registry.listPublic() });
 }
+
+const pendingCommands = new PendingCommands<WebSocket>((browser, result) => sendBrowser(browser, result));
+const heartbeatSweep = setInterval(() => {
+  evictStaleAgents(registry, Date.now() - HEARTBEAT_TIMEOUT_MS, {
+    disconnected: (instanceId) => completionTracker.disconnected(instanceId),
+    failPending: (instanceId, error) => pendingCommands.failInstance(instanceId, error),
+    removed: (instanceId) => broadcast({ v: PROTOCOL_VERSION, type: "agent_removed", instanceId }),
+  });
+}, HEARTBEAT_SWEEP_MS);
+heartbeatSweep.unref();
 
 const httpServer = createHttpServer(async (request, response) => {
   try {
@@ -126,7 +140,10 @@ webSocketServer.on("connection", (socket) => {
       });
     }
   });
-  socket.once("close", () => browsers.delete(socket));
+  socket.once("close", () => {
+    browsers.delete(socket);
+    pendingCommands.removeBrowser(socket);
+  });
 });
 
 async function handlePushApi(request: IncomingMessage, response: ServerResponse, pathname: string): Promise<boolean> {
@@ -230,7 +247,12 @@ function routeBrowserCommand(browser: WebSocket, command: AgentCommand): void {
     });
     return;
   }
-  record.socket.write(encodeJsonLine(command));
+  if (!pendingCommands.add(browser, command)) throw new Error("Command ID is already pending");
+  try {
+    record.socket.write(encodeJsonLine(command));
+  } catch {
+    pendingCommands.fail(command.commandId, "Pi command could not be sent");
+  }
 }
 
 await prepareAgentSocket(socketPath);
@@ -255,6 +277,10 @@ function handleAgentSocket(socket: Socket): void {
         if (!instanceId) {
           if (!isAgentHello(value)) throw new Error("The first agent message must be hello");
           instanceId = value.instanceId;
+          const existing = registry.get(instanceId);
+          if (existing && existing.socket !== socket) {
+            pendingCommands.failInstance(instanceId, "Pi process reconnected before acknowledging the command");
+          }
           const record = registry.upsert(instanceId, socket, value.snapshot);
           const settledDuringReconnect = completionTracker.connected(instanceId, value.snapshot.meta.idle);
           broadcast({ v: PROTOCOL_VERSION, type: "agent_upsert", agent: registry.toPublic(record) });
@@ -272,6 +298,7 @@ function handleAgentSocket(socket: Socket): void {
   socket.once("close", () => {
     if (instanceId && registry.remove(instanceId, socket)) {
       completionTracker.disconnected(instanceId);
+      pendingCommands.failInstance(instanceId, "Pi process disconnected");
       broadcast({ v: PROTOCOL_VERSION, type: "agent_removed", instanceId });
     }
   });
@@ -281,6 +308,7 @@ function handleAgentMessage(socket: Socket, message: AgentToServerMessage): void
   if (message.type === "hello") return;
   const record = registry.get(message.instanceId);
   if (!record || record.socket !== socket) return;
+  record.lastSeenAt = Date.now();
 
   if (message.type === "snapshot") {
     const updated = registry.updateSnapshot(message.instanceId, socket, message.snapshot);
@@ -294,7 +322,6 @@ function handleAgentMessage(socket: Socket, message: AgentToServerMessage): void
     return;
   }
   if (message.type === "event") {
-    record.lastSeenAt = Date.now();
     if (message.event.type === "agent_start") {
       record.snapshot.meta.idle = false;
       completionTracker.started(message.instanceId);
@@ -312,7 +339,7 @@ function handleAgentMessage(socket: Socket, message: AgentToServerMessage): void
     });
     return;
   }
-  broadcast(message);
+  if (message.type === "command_result") pendingCommands.resolve(message);
 }
 
 function notifySettled(instanceId: string): void {
@@ -375,6 +402,8 @@ async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   for (const browser of browsers) browser.close(1001, "server shutting down");
+  clearInterval(heartbeatSweep);
+  pendingCommands.dispose();
   completionTracker.dispose();
   agentServer.close();
   httpServer.close();

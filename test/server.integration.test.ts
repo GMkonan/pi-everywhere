@@ -223,11 +223,12 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     const state = await recoveredState;
     const stateAgents = state.agents as Array<{
       instanceId: string;
+      lastSeenAt: number;
       meta: { sessionId: string };
     }>;
     assert.deepEqual(stateAgents.map((agent) => agent.instanceId).sort(), ["agent-a", "agent-b"]);
     assert.deepEqual([...new Set(stateAgents.map((agent) => agent.meta.sessionId))], ["shared-session"]);
-    reconnectingBrowser.close();
+    const beforeResultLastSeen = stateAgents.find((agent) => agent.instanceId === "agent-b")?.lastSeenAt ?? 0;
 
     let agentAReceivedData = false;
     agentA.once("data", () => { agentAReceivedData = true; });
@@ -246,6 +247,55 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     assert.equal((command.payload as Record<string, unknown>).text, "hello B");
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
     assert.equal(agentAReceivedData, false);
+
+    let otherBrowserReceivedResult = false;
+    const collectOtherResult = (data: WebSocket.RawData) => {
+      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (message.type === "command_result" && message.commandId === "command-1") {
+        otherBrowserReceivedResult = true;
+      }
+    };
+    reconnectingBrowser.on("message", collectOtherResult);
+    const originResult = nextBrowserMessage(browser, (message) =>
+      message.type === "command_result" && message.commandId === "command-1"
+    );
+    agentB.write(`${JSON.stringify({
+      v: 1,
+      type: "command_result",
+      instanceId: "agent-b",
+      commandId: "command-1",
+      ok: true,
+    })}\n`);
+    assert.equal((await originResult).ok, true);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    reconnectingBrowser.off("message", collectOtherResult);
+    assert.equal(otherBrowserReceivedResult, false);
+    reconnectingBrowser.close();
+
+    const livenessBrowser = new WebSocket(
+      `ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`,
+      { origin: `http://127.0.0.1:${port}` },
+    );
+    const refreshedState = nextBrowserMessage(livenessBrowser, (message) => message.type === "state");
+    sockets.push(livenessBrowser);
+    await once(livenessBrowser, "open");
+    const refreshedAgents = (await refreshedState).agents as Array<{ instanceId: string; lastSeenAt: number }>;
+    const afterResultLastSeen = refreshedAgents.find((agent) => agent.instanceId === "agent-b")?.lastSeenAt ?? 0;
+    assert.ok(afterResultLastSeen > beforeResultLastSeen);
+    livenessBrowser.close();
+
+    const commandBeforeReconnect = nextLine(agentB);
+    browser.send(JSON.stringify({
+      v: 1,
+      type: "command",
+      instanceId: "agent-b",
+      commandId: "command-before-reconnect",
+      command: "snapshot",
+    }));
+    await commandBeforeReconnect;
+    const reconnectFailure = nextBrowserMessage(browser, (message) =>
+      message.type === "command_result" && message.commandId === "command-before-reconnect"
+    );
 
     const lifecycleMessages: Array<Record<string, unknown>> = [];
     const collectLifecycle = (data: WebSocket.RawData) => {
@@ -266,6 +316,9 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     sockets.push(replacementB);
     await oldSocketClosed;
     await replacementUpsert;
+    const failedDuringReconnect = await reconnectFailure;
+    assert.equal(failedDuringReconnect.ok, false);
+    assert.match(String(failedDuringReconnect.error), /reconnected before acknowledging/);
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
     browser.off("message", collectLifecycle);
     assert.equal(

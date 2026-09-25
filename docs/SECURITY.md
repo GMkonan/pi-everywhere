@@ -57,7 +57,6 @@ Rotate the token by stopping the daemon, deleting the token file, and restarting
 ## Known gaps
 
 - No rate limiting.
-- No heartbeat timeout eviction (socket closure still removes a process).
 - No per-device or per-session authorization.
 - No audit log.
 - Token appears in the WebSocket query string.

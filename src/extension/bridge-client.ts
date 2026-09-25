@@ -2,6 +2,7 @@ import { createConnection, type Socket } from "node:net";
 import { JsonLineDecoder } from "../shared/framing.ts";
 import {
   PROTOCOL_VERSION,
+  isCommandId,
   isRecord,
   type AgentCommand,
   type AgentSnapshot,
@@ -167,7 +168,7 @@ function isAgentCommand(value: unknown): value is AgentCommand {
     value.v === PROTOCOL_VERSION &&
     value.type === "command" &&
     typeof value.instanceId === "string" &&
-    typeof value.commandId === "string" &&
+    isCommandId(value.commandId) &&
     typeof value.command === "string" &&
     ["prompt", "abort", "snapshot"].includes(value.command)
   );

@@ -62,7 +62,7 @@ Fresh durable snapshot:
 }
 ```
 
-Other extension messages are `heartbeat` and `command_result`. The daemon removes a process when its socket closes. Heartbeat timeout eviction is planned but not implemented.
+Other extension messages are `heartbeat` and `command_result`. The daemon removes a process when its socket closes or when no message/heartbeat has been seen for 45 seconds.
 
 ## Daemon to extension
 
@@ -97,9 +97,9 @@ On connect:
 Incremental messages:
 
 - `agent_upsert`: process connected or its snapshot changed.
-- `agent_removed`: process socket closed.
+- `agent_removed`: process disconnected or exceeded the heartbeat liveness timeout.
 - `agent_event`: structured Pi event.
-- `command_result`: command accepted or rejected by the extension.
+- `command_result`: command accepted or rejected by the extension. Results are routed only to the browser that originated the matching `commandId`; pending commands fail on timeout or process disconnection.
 - `error`: browser command/protocol error.
 
 The browser uses the same command shape shown above.

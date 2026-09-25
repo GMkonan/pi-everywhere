@@ -1,4 +1,5 @@
 export const PROTOCOL_VERSION = 1 as const;
+export const MAX_COMMAND_ID_LENGTH = 128;
 
 export interface AgentMeta {
   instanceId: string;
@@ -134,7 +135,7 @@ export function isAgentMessage(value: unknown): value is AgentToServerMessage {
   if (value.type === "snapshot") return isAgentSnapshot(value.snapshot, value.instanceId);
   if (value.type === "heartbeat") return typeof value.idle === "boolean" && typeof value.timestamp === "number";
   if (value.type === "command_result") {
-    return typeof value.commandId === "string" && typeof value.ok === "boolean";
+    return isCommandId(value.commandId) && typeof value.ok === "boolean";
   }
   return false;
 }
@@ -143,8 +144,12 @@ export function isBrowserCommand(value: unknown): value is BrowserCommand {
   if (!isRecord(value) || value.v !== PROTOCOL_VERSION || value.type !== "command") return false;
   return (
     typeof value.instanceId === "string" &&
-    typeof value.commandId === "string" &&
+    isCommandId(value.commandId) &&
     typeof value.command === "string" &&
     ["prompt", "abort", "snapshot"].includes(value.command)
   );
+}
+
+export function isCommandId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_COMMAND_ID_LENGTH;
 }

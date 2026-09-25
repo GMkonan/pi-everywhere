@@ -45,3 +45,21 @@ test("heartbeat updates liveness without replacing the snapshot", () => {
   assert.ok((updated?.lastSeenAt ?? 0) >= before);
   socket.destroy();
 });
+
+test("registry evicts only records older than the heartbeat deadline", () => {
+  const registry = new AgentRegistry();
+  const staleSocket = new Socket();
+  const currentSocket = new Socket();
+  const stale = registry.upsert("stale", staleSocket, snapshot("stale"));
+  const current = registry.upsert("current", currentSocket, snapshot("current"));
+  stale.lastSeenAt = 100;
+  current.lastSeenAt = 200;
+
+  const evicted = registry.evictStale(150);
+
+  assert.deepEqual(evicted.map((record) => record.instanceId), ["stale"]);
+  assert.equal(registry.get("stale"), undefined);
+  assert.equal(registry.get("current")?.socket, currentSocket);
+  staleSocket.destroy();
+  currentSocket.destroy();
+});

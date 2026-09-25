@@ -23,8 +23,8 @@ Confirm that the existing architecture is reliable before expanding the product 
 
 These are recorded here so validation discoveries are not lost. They may be implemented in this phase or moved deliberately when the active plan is revised.
 
-- [ ] Route extension command acknowledgements only to the browser that originated the command.
-- [ ] Evict processes whose socket remains open but whose heartbeat becomes stale.
+- [x] Route extension command acknowledgements only to the browser that originated the command.
+- [x] Evict processes whose socket remains open but whose heartbeat becomes stale.
 - [ ] Preserve the selected process if the browser reconnects before extensions reconnect after a daemon restart.
 - [ ] Bound or split the initial multi-agent browser state message.
 - [x] Add direct tests for snapshot entry-count and encoded-byte budgets.

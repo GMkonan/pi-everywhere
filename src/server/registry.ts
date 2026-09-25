@@ -69,6 +69,16 @@ export class AgentRegistry {
     return true;
   }
 
+  evictStale(staleBefore: number): AgentRecord[] {
+    const evicted: AgentRecord[] = [];
+    for (const [instanceId, record] of this.records) {
+      if (record.lastSeenAt >= staleBefore) continue;
+      this.records.delete(instanceId);
+      evicted.push(record);
+    }
+    return evicted;
+  }
+
   listPublic(): PublicAgent[] {
     return [...this.records.values()]
       .map((record) => this.toPublic(record))
