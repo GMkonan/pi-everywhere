@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -8,6 +8,7 @@ import {
   defaultUserServicePath,
   installUserService,
   renderUserService,
+  requireBuiltWeb,
 } from "../src/cli/service.js";
 
 test("systemd service uses quoted absolute paths and a private umask", () => {
@@ -15,10 +16,12 @@ test("systemd service uses quoted absolute paths and a private umask", () => {
     nodePath: "/home/user/a node/bin/node",
     serverPath: "/home/user/100% ready/dist/server.js",
     projectRoot: "/home/user/100% ready",
+    webRoot: "/home/user/100% ready/web-dist",
   });
 
   assert.doesNotMatch(unit, /WorkingDirectory/u);
   assert.match(unit, /Environment="PI_EVERYWHERE_ROOT=\/home\/user\/100%% ready"/u);
+  assert.match(unit, /Environment="PI_EVERYWHERE_WEB_ROOT=\/home\/user\/100%% ready\/web-dist"/u);
   assert.match(unit, /ExecStart="\/home\/user\/a node\/bin\/node" "\/home\/user\/100%% ready\/dist\/server\.js"/u);
   assert.match(unit, /Restart=on-failure/u);
   assert.match(unit, /UMask=0077/u);
@@ -44,6 +47,19 @@ test("service installation is atomic and private", async () => {
     assert.equal(await readFile(path, "utf8"), "unit contents\n");
     assert.equal((await stat(path)).mode & 0o777, 0o600);
     assert.equal((await stat(join(directory, "nested"))).mode & 0o777, 0o700);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("built frontend validation requires a readable Vite index", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-everywhere-web-"));
+  try {
+    await assert.rejects(() => requireBuiltWeb(directory), /Built Svelte frontend not found/u);
+    const webRoot = join(directory, "web-dist");
+    await mkdir(webRoot, { recursive: true });
+    await writeFile(join(webRoot, "index.html"), "ok");
+    assert.equal(await requireBuiltWeb(directory), webRoot);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

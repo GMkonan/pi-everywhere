@@ -13,8 +13,9 @@ Pi TUI + extension(s) ── NDJSON over Unix socket ── daemon ── WebSoc
 - `src/extension/`: global Pi extension. It subscribes to structured Pi events and injects remote prompts with `pi.sendUserMessage()`.
 - `src/server/`: local bridge daemon. It owns the live-process registry, routes commands, serves the PWA, and authenticates browser WebSockets.
 - `src/shared/`: protocol types, NDJSON framing, and default paths.
-- `web/`: dependency-free mobile-first PWA.
-- `test/`: Node tests run through `tsx`.
+- `frontend/`: production Svelte + TypeScript PWA source, built by Vite into `web-dist/`.
+- `web/`: legacy dependency-free PWA retained temporarily for rollback and reusable safe parser/controller code during migration.
+- `test/`: Node tests run through `tsx`; Svelte component/reducer tests run through Vitest.
 
 Read `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, and `docs/SECURITY.md` before changing transport, process identity, authentication, or session behavior.
 

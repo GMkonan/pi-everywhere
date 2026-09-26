@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ConversationTranscript from "./components/ConversationTranscript.svelte";
   import Icon from "./components/Icon.svelte";
   import SessionList from "./components/SessionList.svelte";
 
@@ -41,7 +42,7 @@
       <button id="abort" class="stop-button" type="button">Stop</button>
     </header>
 
-    <div id="transcript" class="transcript" aria-live="polite"></div>
+    <ConversationTranscript />
 
     <footer class="conversation-footer">
       <div id="working-indicator" class="working-indicator" hidden>

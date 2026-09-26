@@ -24,7 +24,7 @@ Keep the existing Node/TypeScript daemon, Pi extension, shared protocol, Unix so
 - [x] Establish the Vite/Svelte build and integrate its output with the daemon behind an explicit web-root opt-in.
 - [ ] Represent connection, process selection, history, streaming, and composer state explicitly.
 - [x] Migrate the session list with behavior parity.
-- [ ] Migrate the conversation view with behavior parity.
+- [x] Migrate the conversation transcript and live event rendering with behavior parity.
 - [ ] Migrate safe Markdown and tool rendering without introducing raw HTML rendering.
 - [ ] Migrate PWA installation, reconnection, and push-notification behavior.
 - [ ] Add component and mobile-browser regression tests for critical flows.
@@ -46,7 +46,16 @@ Keep the existing Node/TypeScript daemon, Pi extension, shared protocol, Unix so
 - Svelte now owns session grouping, activity ordering, selected state, working state, and tap routing in the compatibility build.
 - Added Vitest, jsdom, and Testing Library component coverage for rendering, selection, synchronization, and action routing.
 - Centralized shell icons and replaced the visible `π` session badge with a connected-process mark. The Svelte PWA icon follows the same connected-nodes direction and no longer uses the pi glyph.
-- The production legacy build remains unchanged until mobile parity testing permits cutover.
+- The production legacy build remained unchanged for the initial mobile parity test.
+
+### 2026-09-26 — Persistent Svelte frontend and conversation transcript
+
+- Linux setup now validates `web-dist/index.html` and persists the Svelte web root in the private systemd unit; `setup --legacy-web` provides an explicit rollback.
+- Added a typed transcript reducer for snapshots, truncation notices, user/assistant messages, thinking, tools, compaction, branch summaries, errors, and system messages.
+- Streaming thinking/text blocks are temporary, keyed by content index, and replaced by the authoritative finalized assistant message without duplicate separators.
+- Svelte now owns transcript item and tool rendering. Markdown remains protected by the existing allowlisted DOM parser and is never inserted with `innerHTML`.
+- Added reducer and component tests for ordering, tool transitions, streaming cleanup, hidden custom messages, aborts, hostile HTML text, safe links, and transcript semantics.
+- The Svelte build is now the installed service default after the session-list mobile smoke test; the legacy frontend remains available only for rollback while migration continues.
 
 ## Completion signal
 

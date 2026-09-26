@@ -30,7 +30,7 @@ npm install
 npm run setup
 ```
 
-This builds the project, installs the checkout as a global Pi package, and enables `pi-everywhere.service` as a persistent user service. Existing Pi TUIs can then load the extension with `/reload`; new Pi processes load it automatically.
+This builds the Svelte PWA and daemon, installs the checkout as a global Pi package, and enables `pi-everywhere.service` as a persistent user service. Existing Pi TUIs can then load the extension with `/reload`; new Pi processes load it automatically. Emergency rollback to the legacy frontend is available with `npm run setup -- --legacy-web`.
 
 Pair a phone with a short-lived, single-use QR code:
 
@@ -65,7 +65,7 @@ npm run check
 npm run dev:server
 ```
 
-The in-progress Svelte compatibility build can be tested explicitly without replacing the production frontend:
+The Svelte frontend is the service default. To run it with the foreground development daemon:
 
 ```bash
 npm run build:web
@@ -112,7 +112,7 @@ npm run devices      # list paired phones/browsers
 npm run revoke -- ID # revoke a device and its push subscription
 npm run typecheck
 npm run check:web    # validate Svelte and legacy browser modules
-npm run build:web    # build the opt-in Svelte compatibility frontend
+npm run build:web    # build the Svelte frontend
 npm test
 npm run test:web     # run Svelte component tests
 npm run build

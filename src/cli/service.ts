@@ -8,6 +8,7 @@ export interface UserServiceOptions {
   nodePath: string;
   serverPath: string;
   projectRoot: string;
+  webRoot: string;
 }
 
 export function defaultUserServicePath(env: NodeJS.ProcessEnv = process.env): string {
@@ -24,6 +25,7 @@ After=network.target
 [Service]
 Type=simple
 Environment=${systemdQuote(`PI_EVERYWHERE_ROOT=${options.projectRoot}`)}
+Environment=${systemdQuote(`PI_EVERYWHERE_WEB_ROOT=${options.webRoot}`)}
 ExecStart=${systemdQuote(options.nodePath)} ${systemdQuote(options.serverPath)}
 Restart=on-failure
 RestartSec=2
@@ -42,6 +44,17 @@ export async function installUserService(path: string, contents: string): Promis
   await writeFile(temporary, contents, { mode: 0o600 });
   await rename(temporary, path);
   await chmod(path, 0o600);
+}
+
+export async function requireBuiltWeb(projectRoot: string): Promise<string> {
+  const webRoot = join(projectRoot, "web-dist");
+  const indexPath = join(webRoot, "index.html");
+  try {
+    await access(indexPath, constants.R_OK);
+    return webRoot;
+  } catch {
+    throw new Error(`Built Svelte frontend not found at ${indexPath}. Run npm run build first.`);
+  }
 }
 
 export async function requireBuiltServer(projectRoot: string): Promise<string> {

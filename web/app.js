@@ -314,6 +314,17 @@ function renderSelected() {
   const model = agent.meta.model?.split("/").at(-1) || "unknown model";
   elements.meta.textContent = `${basename(agent.meta.cwd) || agent.meta.cwd} · ${model}`;
   elements.meta.title = `${agent.meta.cwd} · PID ${agent.meta.pid} · ${agent.meta.model || "unknown model"}`;
+  const svelteBridge = globalThis.__PI_EVERYWHERE_SVELTE__;
+  if (svelteBridge) {
+    svelteBridge.renderConversation({
+      instanceId: agent.instanceId,
+      entries: agent.snapshot?.entries ?? [],
+      historyTruncated: Boolean(agent.snapshot?.historyTruncated),
+      omittedEntries: agent.snapshot?.omittedEntries,
+    });
+    syncWorkingIndicator();
+    return;
+  }
   elements.transcript.replaceChildren();
   transcriptState = createTranscriptState();
   rebuildingTranscript = true;
@@ -468,6 +479,11 @@ function applyToolResult(message) {
 
 function applyEvent(event) {
   if (!event?.type) return;
+  const svelteBridge = globalThis.__PI_EVERYWHERE_SVELTE__;
+  if (svelteBridge) {
+    svelteBridge.applyConversationEvent(event);
+    return;
+  }
   if (event.type === "message_start") {
     if (event.message?.role === "user") appendUserMessage(event.message);
     else if (event.message?.role === "assistant") startAssistantStream();
@@ -569,7 +585,10 @@ function createTranscriptState() {
 }
 
 function showSystem(text) {
-  if (selectedId) appendActivityText(text, { status: true, error: true });
+  if (!selectedId) return;
+  const svelteBridge = globalThis.__PI_EVERYWHERE_SVELTE__;
+  if (svelteBridge) svelteBridge.appendSystemMessage(text);
+  else appendActivityText(text, { status: true, error: true });
 }
 
 function sendCommand(command, payload) {

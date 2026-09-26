@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import QRCode from "qrcode";
 import { defaultTokenPath } from "../shared/paths.js";
 import { findProjectRoot } from "../server/static-files.js";
@@ -18,6 +19,7 @@ import {
   installUserService,
   renderUserService,
   requireBuiltServer,
+  requireBuiltWeb,
 } from "./service.js";
 
 const command = process.argv[2] ?? "help";
@@ -49,13 +51,14 @@ try {
 }
 
 async function setup(options: string[]): Promise<void> {
-  const unknown = options.filter((option) => option !== "--tailscale");
+  const unknown = options.filter((option) => !["--tailscale", "--legacy-web"].includes(option));
   if (unknown.length > 0) throw new Error(`Unknown setup option: ${unknown.join(", ")}`);
   if (process.platform !== "linux") throw new Error("Automated service setup currently supports Linux with systemd only");
 
   const port = configuredPort();
   const projectRoot = await findProjectRoot(import.meta.url);
   const serverPath = await requireBuiltServer(projectRoot);
+  const webRoot = options.includes("--legacy-web") ? join(projectRoot, "web") : await requireBuiltWeb(projectRoot);
   const nodePath = await findExecutable("node");
   const systemctl = await findExecutable("systemctl");
   const pi = await findExecutable("pi");
@@ -75,7 +78,7 @@ async function setup(options: string[]): Promise<void> {
   await runCommandOrThrow(pi, ["install", projectRoot]);
 
   const servicePath = defaultUserServicePath();
-  await installUserService(servicePath, renderUserService({ nodePath, serverPath, projectRoot }));
+  await installUserService(servicePath, renderUserService({ nodePath, serverPath, projectRoot, webRoot }));
   await runCommandOrThrow(systemctl, ["--user", "daemon-reload"]);
   await runCommandOrThrow(systemctl, ["--user", "enable", SERVICE_NAME]);
   await runCommandOrThrow(systemctl, ["--user", "restart", SERVICE_NAME]);
@@ -293,7 +296,8 @@ function printHelp(): void {
   console.log(`pi-everywhere
 
 Usage:
-  pi-everywhere setup [--tailscale]  Install the Pi package and systemd user service
+  pi-everywhere setup [--tailscale] [--legacy-web]
+                                      Install the Pi package and systemd user service
   pi-everywhere status               Show service, daemon, and phone-access state
   pi-everywhere doctor               Diagnose local setup problems
   pi-everywhere pair                 Show a short-lived phone pairing QR code
