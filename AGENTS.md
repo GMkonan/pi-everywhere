@@ -43,6 +43,8 @@ npm run dev:server
 npm run setup
 npm run status
 npm run doctor
+npm run pair
+npm run devices
 ```
 
 Manual integration:
@@ -69,7 +71,7 @@ When changing Pi integration, verify behavior against the installed Pi version r
 
 - Only currently connected/live Pi processes are shown.
 - History is limited to the latest 200 active-branch entries and a 1.5 MiB encoded budget; the UI reports omitted older entries.
-- Browser token is sent in the WebSocket query string.
+- Paired browsers authenticate with per-device credentials in the first WebSocket message; the master-token query parameter remains as a temporary legacy fallback.
 - Extension UI dialogs from other extensions still appear in the terminal, not the browser.
 - No image upload, model picker, thinking-level picker, tree navigation, file browser, or terminal.
 - In-progress transient state is not perfectly replayed after disconnection; a fresh snapshot recovers finalized entries.

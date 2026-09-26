@@ -16,3 +16,8 @@ export function defaultPushStatePath(env: NodeJS.ProcessEnv = process.env): stri
   const configHome = env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
   return join(configHome, "pi-everywhere", "push.json");
 }
+
+export function defaultDeviceStatePath(env: NodeJS.ProcessEnv = process.env): string {
+  const configHome = env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
+  return join(configHome, "pi-everywhere", "devices.json");
+}

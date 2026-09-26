@@ -1,4 +1,4 @@
-const CACHE = "pi-everywhere-v6";
+const CACHE = "pi-everywhere-v7";
 const SHELL = [
   "/",
   "/styles.css",

@@ -32,6 +32,14 @@ npm run setup
 
 This builds the project, installs the checkout as a global Pi package, and enables `pi-everywhere.service` as a persistent user service. Existing Pi TUIs can then load the extension with `/reload`; new Pi processes load it automatically.
 
+Pair a phone with a short-lived, single-use QR code:
+
+```bash
+npm run pair
+```
+
+The installed PWA keeps its own revocable device credential, so the master token does not need to be copied. Manage paired devices with `npm run devices` and `npm run revoke -- <device-id>`.
+
 Useful lifecycle checks:
 
 ```bash
@@ -67,13 +75,7 @@ Then start a new Pi process or run `/reload` inside an existing one.
 
 The TUI footer should show `everywhere: connected` while the daemon is available.
 
-Open `http://127.0.0.1:8484`, then paste the token from:
-
-```bash
-cat ~/.config/pi-everywhere/token
-```
-
-If `XDG_CONFIG_HOME` is set, the token is stored below that directory instead.
+Open `http://127.0.0.1:8484`. QR pairing is preferred; manual entry of the master token remains available temporarily for migration and development. If `XDG_CONFIG_HOME` is set, state is stored below that directory instead.
 
 ## Phone access with Tailscale
 
@@ -98,6 +100,9 @@ npm run dev:server   # server once, through tsx
 npm run setup        # build and install the Linux systemd user service
 npm run status       # report service, daemon, and Tailscale state
 npm run doctor       # diagnose setup problems
+npm run pair         # create a five-minute, single-use pairing QR code
+npm run devices      # list paired phones/browsers
+npm run revoke -- ID # revoke a device and its push subscription
 npm run typecheck
 npm run check:web    # syntax-check dependency-free browser modules
 npm test

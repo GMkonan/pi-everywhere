@@ -31,7 +31,7 @@ If the daemon is absent, the extension reconnects with exponential backoff cappe
 
 The registry is keyed by a random per-process `instanceId`. A `sessionId` identifies persisted conversation state, not a unique live process, so it is not safe for command routing.
 
-The daemon does not create Pi agents and does not mutate session JSONL files. On Linux, `pi-everywhere setup` installs it as a restart-on-failure systemd user service with a private umask; foreground development remains available separately.
+The daemon does not create Pi agents and does not mutate session JSONL files. It also owns short-lived in-memory pairing offers and the private store of hashed, revocable device credentials. On Linux, `pi-everywhere setup` installs it as a restart-on-failure systemd user service with a private umask; foreground development remains available separately.
 
 ### PWA
 
@@ -41,7 +41,7 @@ Assistant content is rendered according to its structured blocks: thinking and t
 
 ### Optional Web Push
 
-A browser can register a Web Push subscription through token-authenticated, same-origin HTTP endpoints. The daemon stores the subscription and generated VAPID keys in a private state file, then sends a generic notification only when a known working instance emits `agent_settled`:
+An authenticated browser can register a Web Push subscription through same-origin HTTP endpoints. The daemon associates it with the paired device, stores the subscription and generated VAPID keys in a private state file, then sends a generic notification only when a known working instance emits `agent_settled`:
 
 ```text
 agent_settled -> daemon -> browser push provider -> PWA service worker
@@ -81,7 +81,8 @@ A prompt typed in the TUI follows Pi's normal path. The extension observes the r
 ## Default paths
 
 - Unix socket: `$XDG_RUNTIME_DIR/pi-everywhere/bridge.sock`, falling back to `~/.pi/agent/pi-everywhere/bridge.sock`.
-- Browser token: `$XDG_CONFIG_HOME/pi-everywhere/token`, falling back to `~/.config/pi-everywhere/token`.
+- Browser master token: `$XDG_CONFIG_HOME/pi-everywhere/token`, falling back to `~/.config/pi-everywhere/token`.
+- Paired devices: `$XDG_CONFIG_HOME/pi-everywhere/devices.json`.
 - HTTP: `127.0.0.1:8484`.
 
 All paths and the HTTP host/port are configurable through environment variables documented in `docs/SECURITY.md`.

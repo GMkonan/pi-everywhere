@@ -86,9 +86,28 @@ Commands:
 - `abort`: call the owning session context's abort operation.
 - `snapshot`: request a fresh metadata/history snapshot.
 
+## Browser authentication and pairing
+
+New browser clients open `/ws` without a credential in the URL and authenticate as their first WebSocket message:
+
+```json
+{ "v": 1, "type": "authenticate", "credential": "device-credential" }
+```
+
+The daemon answers with `authenticated` and then begins state transfer. A five-second timeout closes sockets that do not authenticate. During migration only, a valid master token in the legacy WebSocket query parameter is still accepted.
+
+Pairing uses HTTP:
+
+- `POST /api/admin/pairings`: master-token-only; creates a five-minute, single-use pairing URL.
+- `POST /api/pair/exchange`: exchanges the secret from that URL for a persistent device credential.
+- `GET /api/admin/devices`: master-token-only device list.
+- `DELETE /api/admin/devices/:id`: revokes the credential, closes its active sockets, and removes its Push subscriptions.
+
+Pairing secrets live only in daemon memory. Device credential hashes and non-secret metadata are persisted; plaintext device credentials are returned once to the pairing browser.
+
 ## Daemon to browser
 
-On connect, the daemon sends one or more bounded state chunks:
+After authentication, the daemon sends one or more bounded state chunks:
 
 ```json
 { "v": 1, "type": "state", "agents": [], "reset": true, "complete": true }

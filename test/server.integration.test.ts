@@ -130,6 +130,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
   const socketPath = join(directory, "bridge.sock");
   const tokenPath = join(directory, "token");
   const pushStatePath = join(directory, "push.json");
+  const deviceStatePath = join(directory, "devices.json");
   const port = await freePort();
   const root = resolve(import.meta.dirname, "..");
   const child = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
@@ -140,6 +141,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       PI_EVERYWHERE_SOCKET: socketPath,
       PI_EVERYWHERE_TOKEN_FILE: tokenPath,
       PI_EVERYWHERE_PUSH_STATE_FILE: pushStatePath,
+      PI_EVERYWHERE_DEVICE_STATE_FILE: deviceStatePath,
       PI_EVERYWHERE_ROOT: root,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -161,6 +163,69 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     }
 
     const token = (await readFile(tokenPath, "utf8")).trim();
+
+    const pairingResponse = await fetch(`http://127.0.0.1:${port}/api/admin/pairings`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ baseUrl: `http://127.0.0.1:${port}` }),
+    });
+    assert.equal(pairingResponse.status, 201);
+    const pairing = await pairingResponse.json() as { code: string };
+    const exchangeResponse = await fetch(`http://127.0.0.1:${port}/api/pair/exchange`, {
+      method: "POST",
+      headers: { origin: `http://127.0.0.1:${port}`, "content-type": "application/json" },
+      body: JSON.stringify({ code: pairing.code, name: "Test phone" }),
+    });
+    assert.equal(exchangeResponse.status, 201);
+    const issued = await exchangeResponse.json() as { device: { id: string; credential: string } };
+    const repeatedExchange = await fetch(`http://127.0.0.1:${port}/api/pair/exchange`, {
+      method: "POST",
+      headers: { origin: `http://127.0.0.1:${port}`, "content-type": "application/json" },
+      body: JSON.stringify({ code: pairing.code, name: "Replay" }),
+    });
+    assert.equal(repeatedExchange.status, 401);
+
+    const deviceBrowser = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+      origin: `http://127.0.0.1:${port}`,
+    });
+    sockets.push(deviceBrowser);
+    await once(deviceBrowser, "open");
+    const deviceAuthenticated = nextBrowserMessage(deviceBrowser, (message) => message.type === "authenticated");
+    const deviceState = nextBrowserState(deviceBrowser);
+    deviceBrowser.send(JSON.stringify({
+      v: 1,
+      type: "authenticate",
+      credential: issued.device.credential,
+    }));
+    assert.equal((await deviceAuthenticated).kind, "device");
+    await deviceState;
+
+    const devicePushSubscription = {
+      endpoint: "https://push.example/paired-device",
+      keys: { p256dh: "abcdefgh12345678", auth: "abcdefgh12345678" },
+    };
+    const devicePush = await fetch(`http://127.0.0.1:${port}/api/push/subscription`, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${issued.device.credential}`,
+        "content-type": "application/json",
+        origin: `http://127.0.0.1:${port}`,
+      },
+      body: JSON.stringify(devicePushSubscription),
+    });
+    assert.equal(devicePush.status, 204);
+    const deviceClosed = once(deviceBrowser, "close");
+    const revoked = await fetch(`http://127.0.0.1:${port}/api/admin/devices/${issued.device.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(revoked.status, 204);
+    await deviceClosed;
+    const revokedAuth = await fetch(`http://127.0.0.1:${port}/api/auth`, {
+      headers: { authorization: `Bearer ${issued.device.credential}` },
+    });
+    assert.equal(revokedAuth.status, 401);
+
     const unauthorizedPushKey = await fetch(`http://127.0.0.1:${port}/api/push/public-key`);
     assert.equal(unauthorizedPushKey.status, 401);
     const pushKey = await fetch(`http://127.0.0.1:${port}/api/push/public-key`, {

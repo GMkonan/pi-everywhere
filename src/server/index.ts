@@ -6,7 +6,7 @@ import { createConnection, createServer as createNetServer, type Socket } from "
 import { dirname } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { JsonLineDecoder, encodeJsonLine } from "../shared/framing.js";
-import { defaultPushStatePath, defaultSocketPath, defaultTokenPath } from "../shared/paths.js";
+import { defaultDeviceStatePath, defaultPushStatePath, defaultSocketPath, defaultTokenPath } from "../shared/paths.js";
 import {
   PROTOCOL_VERSION,
   isAgentHello,
@@ -19,7 +19,9 @@ import {
 import { loadOrCreateToken, tokensEqual } from "./auth.js";
 import { buildBrowserStateMessages } from "./browser-state.js";
 import { CompletionTracker } from "./completion-tracker.js";
+import { DeviceLimitError, DeviceStore, type PublicDevice } from "./device-store.js";
 import { evictStaleAgents } from "./liveness.js";
+import { PairingLimitError, PairingManager } from "./pairing.js";
 import { PendingCommands } from "./pending-commands.js";
 import { PushService, PushSubscriptionLimitError } from "./push-service.js";
 import { AgentRegistry } from "./registry.js";
@@ -34,6 +36,7 @@ const port = Number.parseInt(process.env.PI_EVERYWHERE_PORT ?? "8484", 10);
 const socketPath = process.env.PI_EVERYWHERE_SOCKET ?? defaultSocketPath();
 const tokenPath = process.env.PI_EVERYWHERE_TOKEN_FILE ?? defaultTokenPath();
 const pushStatePath = process.env.PI_EVERYWHERE_PUSH_STATE_FILE ?? defaultPushStatePath();
+const deviceStatePath = process.env.PI_EVERYWHERE_DEVICE_STATE_FILE ?? defaultDeviceStatePath();
 const projectRoot = process.env.PI_EVERYWHERE_ROOT ?? (await findProjectRoot());
 
 if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("Invalid PI_EVERYWHERE_PORT");
@@ -43,9 +46,16 @@ if (!["127.0.0.1", "::1", "localhost"].includes(host) && process.env.PI_EVERYWHE
 
 const token = await loadOrCreateToken(tokenPath);
 const pushService = await PushService.load(pushStatePath, token);
+const deviceStore = await DeviceStore.load(deviceStatePath);
+const pairingManager = new PairingManager();
 const registry = new AgentRegistry();
 const completionTracker = new CompletionTracker();
-const browsers = new Set<WebSocket>();
+interface AuthIdentity {
+  kind: "master" | "device";
+  device?: PublicDevice;
+}
+
+const browsers = new Map<WebSocket, AuthIdentity>();
 const webSocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES });
 
 function sendBrowser(socket: WebSocket, message: unknown, onSent?: () => void): boolean {
@@ -70,7 +80,7 @@ function sendBrowser(socket: WebSocket, message: unknown, onSent?: () => void): 
 }
 
 function broadcast(message: unknown): void {
-  for (const browser of browsers) sendBrowser(browser, message);
+  for (const browser of browsers.keys()) sendBrowser(browser, message);
 }
 
 function sendState(socket: WebSocket): void {
@@ -111,15 +121,17 @@ const httpServer = createHttpServer(async (request, response) => {
       return;
     }
     if (url.pathname === "/api/auth") {
-      if (!requestAuthenticated(request)) {
+      const identity = await authenticateRequest(request);
+      if (!identity) {
         response.writeHead(401, { "cache-control": "no-store" });
         response.end();
         return;
       }
-      response.writeHead(204, { "cache-control": "no-store" });
-      response.end();
+      response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end(JSON.stringify({ kind: identity.kind, device: identity.device }));
       return;
     }
+    if (await handlePairingApi(request, response, url.pathname)) return;
     if (await handlePushApi(request, response, url.pathname)) return;
     if (await serveStatic(url.pathname, projectRoot, response)) return;
     response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
@@ -133,7 +145,8 @@ const httpServer = createHttpServer(async (request, response) => {
 httpServer.on("upgrade", (request, socket, head) => {
   try {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
-    if (url.pathname !== "/ws" || !tokensEqual(token, url.searchParams.get("token")) || !originAllowed(request)) {
+    const legacyToken = url.searchParams.get("token");
+    if (url.pathname !== "/ws" || !originAllowed(request) || (legacyToken !== null && !tokensEqual(token, legacyToken))) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
@@ -146,11 +159,44 @@ httpServer.on("upgrade", (request, socket, head) => {
   }
 });
 
-webSocketServer.on("connection", (socket) => {
-  browsers.add(socket);
-  sendState(socket);
+webSocketServer.on("connection", (socket, request) => {
+  let authenticated = false;
+  let authenticating = false;
+  const timeout = setTimeout(() => socket.close(1008, "authentication required"), 5_000);
+  timeout.unref();
+
+  const activate = (identity: AuthIdentity): void => {
+    if (authenticated) return;
+    authenticated = true;
+    clearTimeout(timeout);
+    browsers.set(socket, identity);
+    sendBrowser(socket, {
+      v: PROTOCOL_VERSION,
+      type: "authenticated",
+      kind: identity.kind,
+      device: identity.device,
+    });
+    sendState(socket);
+  };
+
+  try {
+    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    if (tokensEqual(token, url.searchParams.get("token"))) activate({ kind: "master" });
+  } catch {
+    socket.close(1008, "authentication required");
+  }
 
   socket.on("message", (data) => {
+    if (!authenticated) {
+      if (authenticating) return;
+      authenticating = true;
+      void authenticateWebSocket(data.toString()).then((identity) => {
+        authenticating = false;
+        if (identity) activate(identity);
+        else socket.close(1008, "invalid credential");
+      }).catch(() => socket.close(1011, "authentication failed"));
+      return;
+    }
     try {
       const value: unknown = JSON.parse(data.toString());
       if (!isBrowserCommand(value)) throw new Error("Invalid browser command");
@@ -164,14 +210,91 @@ webSocketServer.on("connection", (socket) => {
     }
   });
   socket.once("close", () => {
+    clearTimeout(timeout);
     browsers.delete(socket);
     pendingCommands.removeBrowser(socket);
   });
 });
 
+async function handlePairingApi(request: IncomingMessage, response: ServerResponse, pathname: string): Promise<boolean> {
+  if (pathname === "/api/pair/exchange") {
+    if (request.method !== "POST" || !originAllowed(request)) {
+      response.writeHead(request.method === "POST" ? 403 : 405, { allow: "POST", "cache-control": "no-store" });
+      response.end();
+      return true;
+    }
+    try {
+      const body = await readJsonBody(request, 16 * 1024);
+      if (!isRecord(body) || !pairingManager.exchange(body.code)) {
+        response.writeHead(401, { "content-type": "application/json", "cache-control": "no-store" });
+        response.end(JSON.stringify({ error: "Pairing code is invalid, expired, or already used" }));
+        return true;
+      }
+      const device = await deviceStore.issue(body.name);
+      response.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end(JSON.stringify({ device }));
+    } catch (error) {
+      const status = error instanceof DeviceLimitError ? 409 : error instanceof RequestBodyTooLargeError ? 413 : 400;
+      response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end(JSON.stringify({ error: error instanceof Error ? error.message : "Pairing failed" }));
+    }
+    return true;
+  }
+
+  if (!pathname.startsWith("/api/admin/")) return false;
+  if (!requestMasterAuthenticated(request)) {
+    response.writeHead(401, { "cache-control": "no-store" });
+    response.end();
+    return true;
+  }
+  try {
+    if (pathname === "/api/admin/pairings" && request.method === "POST") {
+      const body = await readJsonBody(request, 16 * 1024);
+      const offer = pairingManager.create(isRecord(body) ? body.baseUrl : undefined);
+      response.writeHead(201, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end(JSON.stringify(offer));
+      return true;
+    }
+    if (pathname === "/api/admin/devices" && request.method === "GET") {
+      response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end(JSON.stringify({ devices: deviceStore.list() }));
+      return true;
+    }
+    const revokeMatch = pathname.match(/^\/api\/admin\/devices\/([A-Za-z0-9-]{1,128})$/u);
+    if (revokeMatch && request.method === "DELETE") {
+      const deviceId = revokeMatch[1];
+      if (!deviceId || !deviceStore.list().some((device) => device.id === deviceId)) {
+        response.writeHead(404, { "cache-control": "no-store" });
+        response.end();
+        return true;
+      }
+      for (const [browser, identity] of browsers) {
+        if (identity.device?.id === deviceId) browser.close(1008, "device revoked");
+      }
+      await deviceStore.revoke(deviceId);
+      await pushService.revokeOwner(deviceId);
+      response.writeHead(204, { "cache-control": "no-store" });
+      response.end();
+      return true;
+    }
+    response.writeHead(405, { "cache-control": "no-store" });
+    response.end();
+  } catch (error) {
+    const status = error instanceof PairingLimitError || error instanceof DeviceLimitError
+      ? 409
+      : error instanceof RequestBodyTooLargeError
+        ? 413
+        : 400;
+    response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
+    response.end(JSON.stringify({ error: error instanceof Error ? error.message : "Request failed" }));
+  }
+  return true;
+}
+
 async function handlePushApi(request: IncomingMessage, response: ServerResponse, pathname: string): Promise<boolean> {
   if (!pathname.startsWith("/api/push/")) return false;
-  if (!requestAuthenticated(request)) {
+  const identity = await authenticateRequest(request);
+  if (!identity) {
     response.writeHead(401, { "cache-control": "no-store" });
     response.end();
     return true;
@@ -202,7 +325,7 @@ async function handlePushApi(request: IncomingMessage, response: ServerResponse,
 
   try {
     const body = await readJsonBody(request, 64 * 1024);
-    if (request.method === "PUT") await pushService.subscribe(body);
+    if (request.method === "PUT") await pushService.subscribe(body, identity.device?.id ?? "legacy-token");
     else await pushService.unsubscribe(isRecord(body) ? body.endpoint : undefined);
     response.writeHead(204, { "cache-control": "no-store" });
     response.end();
@@ -218,10 +341,33 @@ async function handlePushApi(request: IncomingMessage, response: ServerResponse,
   return true;
 }
 
-function requestAuthenticated(request: IncomingMessage): boolean {
+function requestMasterAuthenticated(request: IncomingMessage): boolean {
   const authorization = request.headers.authorization;
   const supplied = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
   return tokensEqual(token, supplied);
+}
+
+async function authenticateRequest(request: IncomingMessage): Promise<AuthIdentity | undefined> {
+  const authorization = request.headers.authorization;
+  const supplied = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
+  return await authenticateCredential(supplied);
+}
+
+async function authenticateWebSocket(encoded: string): Promise<AuthIdentity | undefined> {
+  let value: unknown;
+  try { value = JSON.parse(encoded); }
+  catch { return undefined; }
+  if (!isRecord(value)
+    || value.v !== PROTOCOL_VERSION
+    || value.type !== "authenticate"
+    || typeof value.credential !== "string") return undefined;
+  return await authenticateCredential(value.credential);
+}
+
+async function authenticateCredential(credential: string | null): Promise<AuthIdentity | undefined> {
+  if (tokensEqual(token, credential)) return { kind: "master" };
+  const device = await deviceStore.authenticate(credential);
+  return device ? { kind: "device", device } : undefined;
 }
 
 async function readJsonBody(request: IncomingMessage, maximumBytes: number): Promise<unknown> {
@@ -424,7 +570,7 @@ let shuttingDown = false;
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  for (const browser of browsers) browser.close(1001, "server shutting down");
+  for (const browser of browsers.keys()) browser.close(1001, "server shutting down");
   clearInterval(heartbeatSweep);
   pendingCommands.dispose();
   completionTracker.dispose();

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { readFile } from "node:fs/promises";
+import QRCode from "qrcode";
 import { defaultTokenPath } from "../shared/paths.js";
 import { findProjectRoot } from "../server/static-files.js";
 import {
@@ -30,6 +32,12 @@ try {
     await status();
   } else if (command === "doctor") {
     await doctor();
+  } else if (command === "pair") {
+    await pair(args);
+  } else if (command === "devices") {
+    await devices();
+  } else if (command === "revoke") {
+    await revoke(args);
   } else if (["help", "--help", "-h"].includes(command)) {
     printHelp();
   } else {
@@ -197,6 +205,74 @@ async function doctor(): Promise<void> {
   if (checks.some((check) => check.level === "error")) process.exitCode = 1;
 }
 
+async function pair(options: string[]): Promise<void> {
+  if (options.length > 0) throw new Error(`Unknown pair option: ${options.join(", ")}`);
+  const port = configuredPort();
+  const tailscale = await findExecutable("tailscale");
+  let baseUrl: string | undefined;
+  if (tailscale) {
+    const result = await runCommand(tailscale, ["serve", "status"]);
+    if (result.code === 0) baseUrl = tailscaleServeUrl(result.stdout, port);
+  }
+  if (!baseUrl) throw new Error(`Tailscale Serve is not routing port ${port}; run tailscale serve --bg ${port}`);
+
+  const response = await adminFetch("/api/admin/pairings", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ baseUrl }),
+  });
+  const result = await response.json() as { url?: unknown; expiresAt?: unknown; error?: unknown };
+  if (!response.ok || typeof result.url !== "string" || typeof result.expiresAt !== "number") {
+    throw new Error(typeof result.error === "string" ? result.error : `Pairing request failed (${response.status})`);
+  }
+  console.log(await QRCode.toString(result.url, { type: "terminal", small: true }));
+  console.log(`Open or scan:\n${result.url}`);
+  console.log(`Expires: ${new Date(result.expiresAt).toLocaleTimeString()}`);
+}
+
+async function devices(): Promise<void> {
+  const response = await adminFetch("/api/admin/devices");
+  const result = await response.json() as { devices?: Array<{ id: string; name: string; createdAt: number; lastUsedAt: number }>; error?: unknown };
+  if (!response.ok || !Array.isArray(result.devices)) {
+    throw new Error(typeof result.error === "string" ? result.error : `Device request failed (${response.status})`);
+  }
+  if (result.devices.length === 0) {
+    console.log("No paired devices.");
+    return;
+  }
+  for (const device of result.devices) {
+    console.log(`${device.id}  ${device.name}  last used ${new Date(device.lastUsedAt).toLocaleString()}`);
+  }
+}
+
+async function revoke(options: string[]): Promise<void> {
+  const requested = options[0];
+  if (!requested || options.length !== 1) throw new Error("Usage: pi-everywhere revoke <device-id-or-prefix>");
+  const listResponse = await adminFetch("/api/admin/devices");
+  const list = await listResponse.json() as { devices?: Array<{ id: string }> };
+  const matches = (list.devices ?? []).filter((device) => device.id === requested || device.id.startsWith(requested));
+  if (matches.length === 0) throw new Error(`No paired device matches ${requested}`);
+  if (matches.length > 1) throw new Error(`Device prefix ${requested} is ambiguous`);
+  const id = matches[0]?.id;
+  if (!id) throw new Error("Device could not be resolved");
+  const response = await adminFetch(`/api/admin/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!response.ok) throw new Error(`Device revocation failed (${response.status})`);
+  console.log(`Revoked device ${id}.`);
+}
+
+async function adminFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  const credential = (await readFile(defaultTokenPath(), "utf8")).trim();
+  return await fetch(`http://127.0.0.1:${configuredPort()}${path}`, {
+    ...options,
+    cache: "no-store",
+    headers: {
+      ...(options.headers ?? {}),
+      authorization: `Bearer ${credential}`,
+    },
+    signal: AbortSignal.timeout(5_000),
+  });
+}
+
 async function waitForHealth(port: number, timeoutMs: number, requireAgent = false) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -220,6 +296,9 @@ Usage:
   pi-everywhere setup [--tailscale]  Install the Pi package and systemd user service
   pi-everywhere status               Show service, daemon, and phone-access state
   pi-everywhere doctor               Diagnose local setup problems
+  pi-everywhere pair                 Show a short-lived phone pairing QR code
+  pi-everywhere devices              List paired devices
+  pi-everywhere revoke <device-id>   Revoke a device and its notifications
   pi-everywhere serve                Run the daemon in the foreground
 `);
 }

@@ -71,8 +71,8 @@ test("push service validates subscriptions and prunes expired endpoints", async 
       /keys/,
     );
 
-    await service.subscribe(subscription("https://push.example/active"));
-    await service.subscribe(subscription("https://push.example/expired"));
+    await service.subscribe(subscription("https://push.example/active"), "device-a");
+    await service.subscribe(subscription("https://push.example/expired"), "device-b");
     const result = await service.notify({
       type: "agent_settled",
       instanceId: "agent-a",
@@ -84,6 +84,8 @@ test("push service validates subscriptions and prunes expired endpoints", async 
 
     assert.deepEqual(result, { sent: 1, removed: 1, failed: 0 });
     assert.equal(service.subscriptionCount, 1);
+    assert.equal(await service.revokeOwner("device-a"), 1);
+    assert.equal(service.subscriptionCount, 0);
     assert.equal(deliveries.length, 2);
     assert.ok(deliveries[0]);
     assert.deepEqual(deliveries[0].payload, {

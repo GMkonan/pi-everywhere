@@ -26,7 +26,7 @@
             <button id="notifications" class="icon-button notification-button" type="button" aria-label="Enable notifications" title="Enable notifications">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
             </button>
-            <button id="change-token" class="icon-button" type="button" aria-label="Change access token" title="Change access token">⌘</button>
+            <button id="change-token" class="icon-button" type="button" aria-label="Change device access" title="Change device access">⌘</button>
             <button id="close-navigation" class="icon-button" type="button" aria-label="Close sessions" hidden>×</button>
           </div>
         </header>
@@ -66,7 +66,7 @@
     <dialog id="token-dialog">
       <form method="dialog" id="token-form">
         <h2>Connect to pi-everywhere</h2>
-        <p>On the PC, copy the token printed by:</p>
+        <p>Prefer pairing from the PC with <code>pi-everywhere pair</code>. For legacy access, paste the master token:</p>
         <code>cat ~/.config/pi-everywhere/token</code>
         <input id="token" type="password" autocomplete="off" placeholder="Access token" required />
         <div class="dialog-actions">

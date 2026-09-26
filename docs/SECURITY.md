@@ -10,7 +10,7 @@ A browser that controls pi-everywhere can prompt a Pi agent whose tools may exec
 - Non-loopback binding is refused unless `PI_EVERYWHERE_ALLOW_REMOTE=1` is explicitly set.
 - Extensions connect through a Unix socket in a user-only directory; the socket mode is `0600`.
 - A random 256-bit browser token is generated with file mode `0600`.
-- Browser WebSocket upgrades require that token and a same-host Origin by default.
+- Browser WebSocket upgrades require a same-host Origin and then a valid credential in the first message. Short-lived pairing creates hashed, per-device credentials; the master-token query parameter remains only as a temporary legacy fallback.
 - Session content is not logged by the daemon.
 - Browser rendering builds allowlisted DOM nodes from Markdown and literal tool text; it never injects untrusted HTML. Links are protocol-restricted and Markdown images are not loaded automatically.
 - Web Push is disabled until a browser explicitly opts in. Subscriptions and the VAPID private key are stored in a `0600` state file under a `0700` directory.
@@ -29,17 +29,19 @@ tailscale serve --bg 8484
 
 This gives tailnet transport encryption and identity/access policy without weakening the daemon's bind default. Do not use Tailscale Funnel or a public reverse proxy for this MVP.
 
-## Token handling
+## Credentials and pairing
 
-Default location:
+The master token remains at:
 
 ```text
 ~/.config/pi-everywhere/token
 ```
 
-The PWA stores the token in `sessionStorage`, so closing the tab/browser session removes it. In the MVP it is included in the WebSocket URL query. The daemon does not log request URLs, but an upstream reverse proxy might. A future protocol should authenticate in the first WebSocket message or use a short-lived exchange token.
+It is used by the local CLI for administrative operations and remains accepted for manual migration access. New PWA connections authenticate in the first WebSocket message, so their credential is not present in the URL. The PWA stores its individual credential in `localStorage` for installed-app persistence.
 
-Rotate the token by stopping the daemon, deleting the token file, and restarting it. Push subscriptions are bound to a hash of that token and are cleared on restart after rotation.
+`pi-everywhere pair` creates a random five-minute offer that is held only in daemon memory and can be exchanged once. The daemon stores only SHA-256 hashes of issued device credentials in a `0600` state file. Revocation closes active WebSockets and removes Push subscriptions owned by that device.
+
+A pairing URL is temporarily equivalent to shell access until exchanged or expired. Display and scan it privately. Rotate the master token by stopping the daemon, deleting the token file, and restarting it; this still clears all Push subscriptions but does not implicitly revoke paired-device credentials.
 
 ## Configuration
 
@@ -51,15 +53,16 @@ Rotate the token by stopping the daemon, deleting the token file, and restarting
 | `PI_EVERYWHERE_ALLOWED_ORIGINS` | Comma-separated additional browser origins | unset |
 | `PI_EVERYWHERE_SOCKET` | Extension/daemon Unix socket path | XDG runtime path |
 | `PI_EVERYWHERE_TOKEN_FILE` | Browser token file | XDG config path |
-| `PI_EVERYWHERE_PUSH_STATE_FILE` | Private VAPID key and push subscriptions | `$XDG_CONFIG_HOME/pi-everywhere/push.json` |
+| `PI_EVERYWHERE_PUSH_STATE_FILE` | Private VAPID key and device-owned push subscriptions | `$XDG_CONFIG_HOME/pi-everywhere/push.json` |
+| `PI_EVERYWHERE_DEVICE_STATE_FILE` | Hashed paired-device credentials and metadata | `$XDG_CONFIG_HOME/pi-everywhere/devices.json` |
 | `PI_EVERYWHERE_VAPID_SUBJECT` | VAPID contact URI | `mailto:pi-everywhere@example.invalid` |
 | `PI_EVERYWHERE_ROOT` | Project root containing `web/` | auto-detected |
 
 ## Known gaps
 
 - No rate limiting.
-- No per-device or per-session authorization.
+- Device credentials grant access to every live Pi process; there is no per-session authorization.
 - No audit log.
-- Token appears in the WebSocket query string.
-- Push authorization is global rather than scoped per device or session, and delivery depends on external browser push providers.
+- The master token is still accepted in the WebSocket query string for legacy clients during migration.
+- Push delivery depends on external browser push providers.
 - Explicit non-loopback mode relies on the same static token and is not the recommended deployment.

@@ -3,13 +3,15 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import webPush, { type PushSubscription, type RequestOptions } from "web-push";
 
-const STATE_VERSION = 1;
+const STATE_VERSION = 2;
+const LEGACY_OWNER = "legacy-token";
 const MAX_SUBSCRIPTIONS = 16;
 const MAX_ENDPOINT_LENGTH = 4096;
 const MAX_KEY_LENGTH = 1024;
 
 interface StoredSubscription extends PushSubscription {
   createdAt: number;
+  ownerId: string;
 }
 
 interface PushState {
@@ -101,10 +103,11 @@ export class PushService {
     return this.state.subscriptions.length;
   }
 
-  async subscribe(value: unknown): Promise<void> {
+  async subscribe(value: unknown, ownerId = LEGACY_OWNER): Promise<void> {
     const subscription = validateSubscription(value);
+    if (!validOwnerId(ownerId)) throw new Error("Invalid push subscription owner");
     const existing = this.state.subscriptions.findIndex((item) => item.endpoint === subscription.endpoint);
-    const stored: StoredSubscription = { ...subscription, createdAt: Date.now() };
+    const stored: StoredSubscription = { ...subscription, createdAt: Date.now(), ownerId };
     if (existing >= 0) this.state.subscriptions[existing] = stored;
     else {
       if (this.state.subscriptions.length >= MAX_SUBSCRIPTIONS) throw new PushSubscriptionLimitError();
@@ -120,6 +123,14 @@ export class PushService {
     const before = this.state.subscriptions.length;
     this.state.subscriptions = this.state.subscriptions.filter((item) => item.endpoint !== endpoint);
     if (this.state.subscriptions.length !== before) await this.persist();
+  }
+
+  async revokeOwner(ownerId: string): Promise<number> {
+    const before = this.state.subscriptions.length;
+    this.state.subscriptions = this.state.subscriptions.filter((item) => item.ownerId !== ownerId);
+    const removed = before - this.state.subscriptions.length;
+    if (removed > 0) await this.persist();
+    return removed;
   }
 
   async notify(payload: PushPayload): Promise<{ sent: number; removed: number; failed: number }> {
@@ -171,7 +182,7 @@ export class PushSubscriptionLimitError extends Error {
 }
 
 function validateState(value: unknown): PushState {
-  if (!isRecord(value) || value.version !== STATE_VERSION || typeof value.tokenFingerprint !== "string" || !validateFingerprint(value.tokenFingerprint)) {
+  if (!isRecord(value) || (value.version !== 1 && value.version !== STATE_VERSION) || typeof value.tokenFingerprint !== "string" || !validateFingerprint(value.tokenFingerprint)) {
     throw new Error("Invalid push state file");
   }
   if (!isRecord(value.vapid) || typeof value.vapid.publicKey !== "string" || typeof value.vapid.privateKey !== "string") {
@@ -187,7 +198,10 @@ function validateState(value: unknown): PushState {
     subscriptions: value.subscriptions.map((subscription) => {
       const validated = validateSubscription(subscription);
       const createdAt = isRecord(subscription) && typeof subscription.createdAt === "number" ? subscription.createdAt : Date.now();
-      return { ...validated, createdAt };
+      const ownerId = isRecord(subscription) && typeof subscription.ownerId === "string" && validOwnerId(subscription.ownerId)
+        ? subscription.ownerId
+        : LEGACY_OWNER;
+      return { ...validated, createdAt, ownerId };
     }),
   };
 }
@@ -212,6 +226,10 @@ function validateSubscription(value: unknown): PushSubscription {
 
 function validKey(value: string): boolean {
   return value.length >= 8 && value.length <= MAX_KEY_LENGTH && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function validOwnerId(value: string): boolean {
+  return value.length > 0 && value.length <= 128 && /^[A-Za-z0-9_-]+$/u.test(value);
 }
 
 function validateFingerprint(value: string): boolean {

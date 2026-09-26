@@ -7,6 +7,8 @@ import {
 } from "./session-list.js";
 
 const PROTOCOL_VERSION = 1;
+const DEVICE_CREDENTIAL_KEY = "pi-everywhere-device";
+const LEGACY_TOKEN_KEY = "pi-everywhere-token";
 const MAX_STATE_QUEUE_BYTES = 2 * 1024 * 1024;
 const WORKING_PHRASES = [
   "Forging code…",
@@ -61,8 +63,8 @@ const elements = {
 };
 
 async function connect() {
-  const token = sessionStorage.getItem("pi-everywhere-token");
-  if (!token) {
+  const credential = currentCredential();
+  if (!credential) {
     if (!elements.tokenDialog.open) elements.tokenDialog.showModal();
     return;
   }
@@ -71,12 +73,12 @@ async function connect() {
   setConnection("connecting");
   try {
     const response = await fetch("/api/auth", {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${credential}` },
       cache: "no-store",
     });
     if (response.status === 401) {
       reconnectEnabled = false;
-      sessionStorage.removeItem("pi-everywhere-token");
+      clearStoredCredentials();
       setConnection("offline");
       if (!elements.tokenDialog.open) elements.tokenDialog.showModal();
       return;
@@ -90,8 +92,10 @@ async function connect() {
   }
 
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  socket = new WebSocket(`${scheme}//${location.host}/ws?token=${encodeURIComponent(token)}`);
-  socket.addEventListener("open", () => setConnection("online"));
+  socket = new WebSocket(`${scheme}//${location.host}/ws`);
+  socket.addEventListener("open", () => {
+    socket.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "authenticate", credential }));
+  });
   socket.addEventListener("message", ({ data }) => {
     try { handleServerMessage(JSON.parse(data)); }
     catch { showSystem("Received an invalid message from the server."); }
@@ -104,6 +108,10 @@ async function connect() {
 
 function handleServerMessage(message) {
   if (message.v !== PROTOCOL_VERSION) return;
+  if (message.type === "authenticated") {
+    setConnection("online");
+    return;
+  }
   if (message.type !== "state" && stateSyncing) {
     const messageBytes = new TextEncoder().encode(JSON.stringify(message)).byteLength;
     if (queuedServerMessages.length >= 1000 || queuedServerMessageBytes + messageBytes > MAX_STATE_QUEUE_BYTES) {
@@ -592,7 +600,7 @@ elements.abort.addEventListener("click", () => sendCommand("abort"));
 elements.changeToken.addEventListener("click", () => {
   reconnectEnabled = false;
   socket?.close();
-  sessionStorage.removeItem("pi-everywhere-token");
+  clearStoredCredentials();
   elements.token.value = "";
   elements.tokenDialog.showModal();
 });
@@ -600,7 +608,7 @@ elements.changeToken.addEventListener("click", () => {
 elements.tokenForm.addEventListener("submit", () => {
   const token = elements.token.value.trim();
   if (!token) return;
-  sessionStorage.setItem("pi-everywhere-token", token);
+  sessionStorage.setItem(LEGACY_TOKEN_KEY, token);
   reconnectEnabled = true;
   setTimeout(() => void connect(), 0);
 });
@@ -724,14 +732,64 @@ function notificationsSupported() {
   return isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 }
 
+function currentCredential() {
+  try {
+    return localStorage.getItem(DEVICE_CREDENTIAL_KEY) ?? sessionStorage.getItem(LEGACY_TOKEN_KEY);
+  } catch {
+    return sessionStorage.getItem(LEGACY_TOKEN_KEY);
+  }
+}
+
+function clearStoredCredentials() {
+  try { localStorage.removeItem(DEVICE_CREDENTIAL_KEY); }
+  catch { /* Storage can be unavailable in restricted browser modes. */ }
+  sessionStorage.removeItem(LEGACY_TOKEN_KEY);
+}
+
+async function exchangePairingCode() {
+  const url = new URL(location.href);
+  const code = url.searchParams.get("pair");
+  if (!code) return;
+  url.searchParams.delete("pair");
+  history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  setConnection("pairing");
+  try {
+    const response = await fetch("/api/pair/exchange", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code, name: mobileDeviceName() }),
+    });
+    const result = await response.json();
+    if (!response.ok || typeof result?.device?.credential !== "string") {
+      throw new Error(result?.error || "Pairing failed");
+    }
+    localStorage.setItem(DEVICE_CREDENTIAL_KEY, result.device.credential);
+    if (localStorage.getItem(DEVICE_CREDENTIAL_KEY) !== result.device.credential) {
+      throw new Error("The browser could not persist the device credential");
+    }
+    sessionStorage.removeItem(LEGACY_TOKEN_KEY);
+    reconnectEnabled = true;
+    showToast("Device paired successfully.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Pairing failed.");
+  }
+}
+
+function mobileDeviceName() {
+  const browser = /SamsungBrowser/u.test(navigator.userAgent) ? "Samsung Internet" : /CriOS|Chrome/u.test(navigator.userAgent) ? "Chrome" : "Browser";
+  const platform = /Android/u.test(navigator.userAgent) ? "Android" : /iPhone|iPad/u.test(navigator.userAgent) ? "iOS" : navigator.platform || "device";
+  return `${browser} PWA on ${platform}`;
+}
+
 function authenticatedFetch(path, options = {}) {
-  const token = sessionStorage.getItem("pi-everywhere-token");
+  const credential = currentCredential();
   return fetch(path, {
     ...options,
     cache: "no-store",
     headers: {
       ...(options.headers ?? {}),
-      authorization: `Bearer ${token ?? ""}`,
+      authorization: `Bearer ${credential ?? ""}`,
     },
   });
 }
@@ -833,4 +891,4 @@ function scrollToBottom() {
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 setNavigation(true);
-void connect();
+void exchangePairingCode().then(() => connect());
