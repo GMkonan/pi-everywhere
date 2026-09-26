@@ -27,10 +27,11 @@
     "pair": "node dist/src/cli/index.js pair",
     "devices": "node dist/src/cli/index.js devices",
     "revoke": "node dist/src/cli/index.js revoke",
-    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/src/cli/index.js', 0o755)\"",
+    "build": "tsc -p tsconfig.build.json && npm run build:web && node -e \"require('node:fs').chmodSync('dist/src/cli/index.js', 0o755)\"",
+    "build:web": "vite build --config frontend/vite.config.ts",
     "start": "node dist/src/server/index.js",
     "typecheck": "tsc --noEmit",
-    "check:web": "node --check web/app.js && node --check web/markdown.js && node --check web/session-list.js && node --check web/sw.js",
+    "check:web": "svelte-check --tsconfig ./frontend/tsconfig.json && node --check web/app.js && node --check web/markdown.js && node --check web/session-list.js && node --check web/sw.js && node --check frontend/public/sw.js",
     "test": "tsx --test test/*.test.ts",
     "check": "npm run typecheck && npm run check:web && npm test && npm run build"
   },
@@ -44,12 +45,16 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
     "@types/node": "^24.10.0",
     "@types/qrcode": "^1.5.6",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.7.6",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^6.4.3"
   },
   "engines": {
     "node": ">=22"

@@ -1,0 +1,17 @@
+{
+  "name": "pi-everywhere",
+  "short_name": "π everywhere",
+  "description": "Control the same live Pi process from your phone and terminal.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#11111b",
+  "theme_color": "#11111b",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -65,6 +65,13 @@ npm run check
 npm run dev:server
 ```
 
+The in-progress Svelte compatibility build can be tested explicitly without replacing the production frontend:
+
+```bash
+npm run build:web
+PI_EVERYWHERE_WEB_ROOT="$PWD/web-dist" npm run dev:server
+```
+
 Install this checkout as a local Pi package when it is not already registered:
 
 ```bash
@@ -104,10 +111,11 @@ npm run pair         # create a five-minute, single-use pairing QR code
 npm run devices      # list paired phones/browsers
 npm run revoke -- ID # revoke a device and its push subscription
 npm run typecheck
-npm run check:web    # syntax-check dependency-free browser modules
+npm run check:web    # validate Svelte and legacy browser modules
+npm run build:web    # build the opt-in Svelte compatibility frontend
 npm test
 npm run build
-npm run check        # typecheck + web syntax + tests + build
+npm run check        # typecheck + Svelte/browser checks + tests + builds
 npm start            # run compiled server after npm run build
 ```
 

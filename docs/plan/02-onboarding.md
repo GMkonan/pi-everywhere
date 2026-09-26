@@ -6,14 +6,14 @@ Make first-time setup feel like: run one command, scan a QR code, and open the i
 
 ## Planned work
 
-- [ ] Choose a publishable package name and define the supported installation command.
+- [ ] Choose a publishable package name and define the supported installation command. *(Deferred until after the frontend migration.)*
 - [x] Add initial `setup`, `doctor`, and `status` flows.
 - [x] Install and manage a persistent daemon with a systemd user service; consider LaunchAgent and Home Manager support separately.
 - [x] Detect Tailscale and guide configuration, with explicit `setup --tailscale` opt-in to configure Serve without exposing the daemon publicly.
 - [x] Replace manual shared-token entry with short-lived QR pairing while retaining a temporary legacy fallback.
 - [x] Give each paired device a persistent, revocable credential.
 - [x] Provide CLI commands to list and revoke paired devices.
-- [ ] Guide PWA installation and notification permission on iOS and Android.
+- [ ] Guide PWA installation and notification permission on iOS and Android. *(Deferred; the existing install and notification controls remain available.)*
 
 ## Implementation log
 

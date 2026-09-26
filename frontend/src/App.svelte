@@ -1,0 +1,70 @@
+<script lang="ts">
+  // This compatibility shell intentionally has no reactive state. The legacy
+  // controller owns these nodes until each behavior moves into Svelte.
+</script>
+
+<main class="app-shell">
+  <nav id="session-index" class="session-index" aria-label="Pi sessions">
+    <header class="index-header">
+      <div>
+        <h1>Sessions</h1>
+        <div class="connection-line">
+          <span id="connection-dot" class="connection-dot offline"></span>
+          <span id="connection-status">offline</span>
+          <span aria-hidden="true">·</span>
+          <span id="agent-count">0 live</span>
+        </div>
+      </div>
+      <div class="index-actions">
+        <button id="notifications" class="icon-button notification-button" type="button" aria-label="Enable notifications" title="Enable notifications">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+        </button>
+        <button id="change-token" class="icon-button" type="button" aria-label="Change device access" title="Change device access">⌘</button>
+        <button id="close-navigation" class="icon-button" type="button" aria-label="Close sessions" hidden>×</button>
+      </div>
+    </header>
+    <div id="agents" class="session-groups"></div>
+  </nav>
+
+  <section id="session-view" class="conversation" hidden>
+    <header class="conversation-header">
+      <button id="open-navigation" class="icon-button hamburger" type="button" aria-label="Open sessions" aria-controls="session-index">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="conversation-title">
+        <h1 id="session-name">Session</h1>
+        <p id="session-meta"></p>
+      </div>
+      <button id="abort" class="stop-button" type="button">Stop</button>
+    </header>
+
+    <div id="transcript" class="transcript" aria-live="polite"></div>
+
+    <footer class="conversation-footer">
+      <div id="working-indicator" class="working-indicator" hidden>
+        <span id="working-spinner" class="working-spinner" aria-hidden="true">⠋</span>
+        <span id="working-phrase" aria-hidden="true">Forging code…</span>
+        <span class="sr-only">Pi is working</span>
+      </div>
+      <form id="prompt-form" class="composer">
+        <textarea id="prompt" rows="1" placeholder="Message Pi…" aria-label="Message Pi" required></textarea>
+        <button type="submit" class="send-button" aria-label="Send message" title="Send message (Ctrl/⌘+Enter)">↑</button>
+      </form>
+    </footer>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<dialog id="token-dialog">
+  <form method="dialog" id="token-form">
+    <h2>Connect to pi-everywhere</h2>
+    <p>Prefer pairing from the PC with <code>pi-everywhere pair</code>. For legacy access, paste the master token:</p>
+    <code>cat ~/.config/pi-everywhere/token</code>
+    <input id="token" type="password" autocomplete="off" placeholder="Access token" required />
+    <div class="dialog-actions">
+      <button value="cancel" class="quiet">Cancel</button>
+      <button value="connect">Connect</button>
+    </div>
+  </form>
+</dialog>
