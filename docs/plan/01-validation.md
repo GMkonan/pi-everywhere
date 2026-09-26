@@ -13,7 +13,9 @@ Confirm that the existing architecture is reliable before expanding the product 
   - [x] `/resume`
   - [x] `/fork`
   - [x] `/clone`
-- [ ] Test browser suspension and reconnection through Tailscale Serve on physical Android and iPhone devices.
+- [ ] Test browser suspension and reconnection through Tailscale Serve on physical devices:
+  - [x] Android — Galaxy S23 PWA resumed successfully after the phone was locked.
+  - [ ] iPhone.
 - [x] Test large, cyclic, and custom tool-event serialization.
 - [x] Cover routing and authentication with two fake agents sharing one `sessionId`, browser state recovery, and socket replacement.
 - [x] Keep `instanceId` stable across extension reloads within the same Pi OS process.
@@ -45,6 +47,13 @@ The current session lifecycle and reconnect behavior are understood, documented,
 - Exercised `/resume`, `/clone`, and `/fork` against isolated seeded sessions; every transition changed to the expected session while preserving the Pi PID and `instanceId`.
 - Sent no model prompts during these smoke tests.
 - Added direct snapshot-budget tests and a Unix-socket `BridgeClient` test carrying a large, cyclic custom-tool payload with invalid and throwing properties.
+
+### 2026-09-25 — Android physical-device smoke test
+
+- Opened the installed PWA on a Galaxy S23 through Tailscale Serve.
+- Sent a prompt successfully from the phone, locked the device, and later reopened the PWA.
+- The connection, selected session, and conversation appeared to recover correctly after suspension.
+- Browser/install source still needs to be recorded; iPhone validation remains pending.
 
 ## Notes
 
