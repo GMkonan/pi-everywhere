@@ -4,9 +4,16 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { BridgeClient } from "../src/extension/bridge-client.js";
+import { BridgeClient, reconnectDelay } from "../src/extension/bridge-client.js";
 import { JsonLineDecoder } from "../src/shared/framing.js";
 import type { AgentSnapshot } from "../src/shared/protocol.js";
+
+test("BridgeClient retries quickly without busy-looping when the daemon returns", () => {
+  assert.deepEqual(
+    Array.from({ length: 8 }, (_, attempt) => reconnectDelay(attempt)),
+    [250, 500, 1000, 2000, 2000, 2000, 2000, 2000],
+  );
+});
 
 test("BridgeClient transports a bounded custom tool event without throwing", { timeout: 10_000 }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-everywhere-bridge-"));

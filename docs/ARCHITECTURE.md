@@ -20,7 +20,7 @@ On `session_start` it:
 
 On `session_shutdown` it closes its socket, cancels reconnect/heartbeat timers, and drops the context. Session replacement and `/reload` therefore cannot leave callbacks using a stale session runtime.
 
-If the daemon is absent, the extension reconnects with bounded exponential backoff. Events are not buffered while disconnected; the next snapshot recovers finalized history.
+If the daemon is absent, the extension reconnects with exponential backoff capped at two seconds, keeping daemon restarts responsive without busy-looping inside Pi. Events are not buffered while disconnected; the next snapshot recovers finalized history.
 
 ### Local daemon
 

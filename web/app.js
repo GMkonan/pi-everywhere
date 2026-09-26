@@ -577,7 +577,7 @@ elements.form.addEventListener("submit", (event) => {
 });
 
 elements.prompt.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey) {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.isComposing) {
     event.preventDefault();
     elements.form.requestSubmit();
   }

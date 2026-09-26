@@ -135,7 +135,7 @@ export class BridgeClient {
 
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return;
-    const delay = Math.min(10_000, 250 * 2 ** this.reconnectAttempt++);
+    const delay = reconnectDelay(this.reconnectAttempt++);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
       this.connect();
@@ -156,6 +156,10 @@ export class BridgeClient {
     socket.write(line);
     return true;
   }
+}
+
+export function reconnectDelay(attempt: number): number {
+  return Math.min(2_000, 250 * 2 ** Math.max(0, attempt));
 }
 
 function isTransientEvent(value: unknown): boolean {

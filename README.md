@@ -67,6 +67,8 @@ Open the HTTPS URL shown by Tailscale on the phone. Do not expose this service p
 
 Notifications are opt-in from the bell button and require a secure browser context. On iOS/iPadOS, install the PWA to the Home Screen (16.4 or newer). Closed-app delivery uses the browser vendor's push service, so the daemon needs outbound internet access.
 
+In the prompt composer, Enter inserts a new line. Use the arrow button or Ctrl/⌘+Enter to send.
+
 ## Commands
 
 ```bash
