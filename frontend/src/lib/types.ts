@@ -1,5 +1,6 @@
 export interface AgentMeta {
   cwd: string;
+  sessionId?: string;
   idle: boolean;
   pid: number;
   sessionName?: string;
@@ -16,8 +17,11 @@ export interface LiveAgent {
   instanceId: string;
   connectedAt: number;
   lastActivityAt?: number;
+  generation?: number;
+  snapshotSequence?: number;
   meta: AgentMeta;
   snapshot?: AgentSnapshot;
+  historyLoaded?: boolean;
 }
 
 export interface SessionListState {
@@ -35,6 +39,7 @@ export interface ConversationInput {
   entries: unknown[];
   historyTruncated: boolean;
   omittedEntries?: number;
+  loading?: boolean;
 }
 
 export interface SvelteUiBridge {

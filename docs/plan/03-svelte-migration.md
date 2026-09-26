@@ -56,6 +56,17 @@ Keep the existing Node/TypeScript daemon, Pi extension, shared protocol, Unix so
 - Svelte now owns transcript item and tool rendering. Markdown remains protected by the existing allowlisted DOM parser and is never inserted with `innerHTML`.
 - Added reducer and component tests for ordering, tool transitions, streaming cleanup, hidden custom messages, aborts, hostile HTML text, safe links, and transcript semantics.
 - The Svelte build is now the installed service default after the session-list mobile smoke test; the legacy frontend remains available only for rollback while migration continues.
+- Physical Galaxy S23 use confirmed that the migrated conversation/history view appears to work correctly.
+
+### 2026-09-26 — On-demand mobile history
+
+- Replaced the eager all-session transcript transfer with a metadata-only live-process index carrying daemon-maintained activity timestamps.
+- Selecting a session now creates a browser-specific history watch; full snapshot updates go only to browsers watching that exact `instanceId`.
+- Added an accessible loading state, stale-response protection through request IDs, connection-generation/event-sequence reconciliation, and a three-session memory-only history cache.
+- Snapshot and reconnect updates preserve lightweight list metadata while refreshing the selected conversation without broadcasting every transcript.
+- Added a bounded serialized browser send queue and temporary capability negotiation so suspended pre-migration PWA windows continue receiving eager state until they reload.
+- Added protocol, registry, frame-budget, component, and two-browser integration coverage for metadata-only state and private on-demand history routing.
+- On the 10-process host, the authenticated initial transfer dropped from roughly 7.15 MiB across five frames to 11.3 KiB in one frame; local index arrival measured 12 ms, with the selected 200-entry history fetched separately.
 
 ## Completion signal
 

@@ -153,6 +153,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
   try {
     await waitForHealth(port);
     for (const [path, expectedExport] of [
+      ["/history-sync.js", "export function eventsAfterSnapshot"],
       ["/markdown.js", "export function renderMarkdown"],
       ["/session-list.js", "export function sortAgentsByActivity"],
     ] as const) {
@@ -279,7 +280,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       }),
     );
 
-    const browser = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`, {
+    const browser = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
       origin: `http://127.0.0.1:${port}`,
     });
     sockets.push(browser);
@@ -287,6 +288,14 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       browser.once("open", resolveOpen);
       browser.once("error", reject);
     });
+    const initialBrowserState = nextBrowserState(browser);
+    browser.send(JSON.stringify({
+      v: 1,
+      type: "authenticate",
+      credential: token,
+      capabilities: ["lazy-history-v1"],
+    }));
+    await initialBrowserState;
 
     const upsertA = nextBrowserMessage(browser, (message) =>
       message.type === "agent_upsert" &&
@@ -309,24 +318,117 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     await upsertB;
 
     const reconnectingBrowser = new WebSocket(
-      `ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`,
+      `ws://127.0.0.1:${port}/ws`,
       { origin: `http://127.0.0.1:${port}` },
     );
-    const recoveredState = nextBrowserState(reconnectingBrowser);
     sockets.push(reconnectingBrowser);
     await once(reconnectingBrowser, "open");
+    const recoveredState = nextBrowserState(reconnectingBrowser);
+    reconnectingBrowser.send(JSON.stringify({
+      v: 1,
+      type: "authenticate",
+      credential: token,
+      capabilities: ["lazy-history-v1"],
+    }));
     const state = await recoveredState;
     assert.equal(state.reset, true);
     assert.equal(state.complete, true);
-    assert.ok(Number(state.chunks) >= 3);
+    assert.equal(Number(state.chunks), 1);
     const stateAgents = state.agents as Array<{
       instanceId: string;
       lastSeenAt: number;
+      historyLoaded: boolean;
       meta: { sessionId: string };
+      snapshot: { entries: unknown[] };
     }>;
     assert.deepEqual(stateAgents.map((agent) => agent.instanceId).sort(), ["agent-a", "agent-b"]);
     assert.deepEqual([...new Set(stateAgents.map((agent) => agent.meta.sessionId))], ["shared-session"]);
+    assert.ok(stateAgents.every((agent) => agent.historyLoaded === false && agent.snapshot.entries.length === 0));
     const beforeResultLastSeen = stateAgents.find((agent) => agent.instanceId === "agent-b")?.lastSeenAt ?? 0;
+    const agentAGeneration = (stateAgents.find((agent) => agent.instanceId === "agent-a") as { generation?: number } | undefined)?.generation;
+    assert.equal(typeof agentAGeneration, "number");
+
+    let otherBrowserReceivedHistory = false;
+    const collectOtherHistory = (data: WebSocket.RawData) => {
+      const message = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (message.type === "agent_history") otherBrowserReceivedHistory = true;
+    };
+    browser.on("message", collectOtherHistory);
+    const requestedHistory = nextBrowserMessage(reconnectingBrowser, (message) =>
+      message.type === "agent_history" && message.instanceId === "agent-a" && message.requestId === "history-a"
+    );
+    reconnectingBrowser.send(JSON.stringify({
+      v: 1,
+      type: "history_request",
+      instanceId: "agent-a",
+      requestId: "history-a",
+    }));
+    const history = await requestedHistory;
+    const historyAgent = history.agent as {
+      historyLoaded: boolean;
+      snapshotSequence: number;
+      snapshot: { entries: Array<{ data: string }> };
+    };
+    assert.equal(historyAgent.historyLoaded, true);
+    assert.equal(historyAgent.snapshotSequence, 0);
+    assert.equal(historyAgent.snapshot.entries[0]?.data.length, 1_050_000);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    browser.off("message", collectOtherHistory);
+    assert.equal(otherBrowserReceivedHistory, false);
+
+    const liveEvent = nextBrowserMessage(reconnectingBrowser, (message) =>
+      message.type === "agent_event" && message.instanceId === "agent-a" && message.sequence === 1
+    );
+    agentA.write(`${JSON.stringify({
+      v: 1,
+      type: "event",
+      instanceId: "agent-a",
+      sequence: 1,
+      event: { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "live" } },
+    })}\n`);
+    assert.equal((await liveEvent).generation, agentAGeneration);
+
+    otherBrowserReceivedHistory = false;
+    browser.on("message", collectOtherHistory);
+    const summaryRefresh = nextBrowserMessage(browser, (message) =>
+      message.type === "agent_upsert" &&
+      (message.agent as { instanceId?: string } | undefined)?.instanceId === "agent-a"
+    );
+    const watchedRefresh = nextBrowserMessage(reconnectingBrowser, (message) =>
+      message.type === "agent_history" && message.instanceId === "agent-a" && message.requestId === "history-a"
+    );
+    agentA.write(`${JSON.stringify({
+      v: 1,
+      type: "snapshot",
+      instanceId: "agent-a",
+      snapshot: {
+        meta: {
+          instanceId: "agent-a",
+          pid: 1,
+          cwd: "/tmp/agent-a",
+          sessionId: "shared-session",
+          thinkingLevel: "off",
+          idle: true,
+        },
+        entries: [{ type: "custom", data: "updated" }],
+        capturedAt: Date.now(),
+      },
+    })}\n`);
+    const refreshedSummary = await summaryRefresh;
+    assert.deepEqual(
+      ((refreshedSummary.agent as { snapshot: { entries: unknown[] } }).snapshot.entries),
+      [],
+    );
+    const refreshedHistory = await watchedRefresh;
+    const refreshedHistoryAgent = refreshedHistory.agent as {
+      snapshotSequence: number;
+      snapshot: { entries: Array<{ data: string }> };
+    };
+    assert.equal(refreshedHistoryAgent.snapshotSequence, 1);
+    assert.equal(refreshedHistoryAgent.snapshot.entries[0]?.data, "updated");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    browser.off("message", collectOtherHistory);
+    assert.equal(otherBrowserReceivedHistory, false);
 
     let agentAReceivedData = false;
     agentA.once("data", () => { agentAReceivedData = true; });
@@ -377,7 +479,13 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     const refreshedState = nextBrowserState(livenessBrowser);
     sockets.push(livenessBrowser);
     await once(livenessBrowser, "open");
-    const refreshedAgents = (await refreshedState).agents as Array<{ instanceId: string; lastSeenAt: number }>;
+    const refreshedAgents = (await refreshedState).agents as Array<{
+      instanceId: string;
+      lastSeenAt: number;
+      historyLoaded: boolean;
+      snapshot: { entries: unknown[] };
+    }>;
+    assert.ok(refreshedAgents.every((agent) => agent.historyLoaded && agent.snapshot.entries.length > 0));
     const afterResultLastSeen = refreshedAgents.find((agent) => agent.instanceId === "agent-b")?.lastSeenAt ?? 0;
     assert.ok(afterResultLastSeen > beforeResultLastSeen);
     livenessBrowser.close();

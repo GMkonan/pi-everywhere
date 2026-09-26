@@ -73,7 +73,7 @@ When changing Pi integration, verify behavior against the installed Pi version r
 ## Current limitations
 
 - Only currently connected/live Pi processes are shown.
-- History is limited to the latest 200 active-branch entries and a 1.5 MiB encoded budget; the UI reports omitted older entries.
+- The initial browser registry is metadata-only. History is fetched only for the selected `instanceId`, cached in memory for up to three visited sessions, and limited to the latest 200 active-branch entries and a 1.5 MiB encoded budget; the UI reports omitted older entries.
 - Paired browsers authenticate with per-device credentials in the first WebSocket message; the master-token query parameter remains as a temporary legacy fallback.
 - Extension UI dialogs from other extensions still appear in the terminal, not the browser.
 - No image upload, model picker, thinking-level picker, tree navigation, file browser, or terminal.

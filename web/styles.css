@@ -234,6 +234,11 @@ button { cursor: pointer; }
   padding: 22px max(18px, calc((100% - 800px) / 2)) 30px;
   scroll-padding-bottom: 28px;
 }
+.conversation-loading {
+  margin: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
 .user-message {
   width: 100%;
   align-self: stretch;

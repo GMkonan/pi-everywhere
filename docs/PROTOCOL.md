@@ -91,10 +91,10 @@ Commands:
 New browser clients open `/ws` without a credential in the URL and authenticate as their first WebSocket message:
 
 ```json
-{ "v": 1, "type": "authenticate", "credential": "device-credential" }
+{ "v": 1, "type": "authenticate", "credential": "device-credential", "capabilities": ["lazy-history-v1"] }
 ```
 
-The daemon answers with `authenticated` and then begins state transfer. A five-second timeout closes sockets that do not authenticate. During migration only, a valid master token in the legacy WebSocket query parameter is still accepted.
+The daemon answers with `authenticated` and then begins state transfer. A five-second timeout closes sockets that do not authenticate. `lazy-history-v1` advertises support for the metadata-only index and on-demand transcript messages. During one migration window, clients without that capability receive the previous eager full-history state/upserts so an already-running suspended PWA remains usable. During migration only, a valid master token in the legacy WebSocket query parameter is still accepted.
 
 Pairing uses HTTP:
 
@@ -107,17 +107,31 @@ Pairing secrets live only in daemon memory. Device credential hashes and non-sec
 
 ## Daemon to browser
 
-After authentication, the daemon sends one or more bounded state chunks:
+After authentication, a `lazy-history-v1` browser receives one or more bounded, metadata-only state chunks:
 
 ```json
 { "v": 1, "type": "state", "agents": [], "reset": true, "complete": true }
 ```
 
-`reset: true` starts a fresh registry transfer. For a large transfer, the daemon first sends lightweight copies of the live-process index with history entries omitted, allowing the session list to render immediately, and then replaces them with full snapshot chunks where `reset` is false. The browser finalizes when `complete` is true. Incremental messages received during the transfer are replayed after the final chunk so they cannot be overwritten by older snapshot data. Oversized per-agent history is trimmed from the oldest end and reports the additional omissions through normal snapshot truncation metadata.
+`reset: true` starts a fresh registry transfer and `complete: true` ends it. Every indexed agent has `historyLoaded: false`, an empty `snapshot.entries`, and a daemon-maintained `lastActivityAt` so the session list can sort correctly without transcript content.
+
+When a session is selected, the browser requests only that live process's history:
+
+```json
+{ "v": 1, "type": "history_request", "instanceId": "1234-uuid", "requestId": "request-uuid" }
+```
+
+The daemon responds only to that browser and treats it as the browser's current history watch:
+
+```json
+{ "v": 1, "type": "agent_history", "instanceId": "1234-uuid", "requestId": "request-uuid", "agent": {} }
+```
+
+The response's agent has `historyLoaded: true`, a connection `generation`, a `snapshotSequence` watermark, and its bounded snapshot. Incremental `agent_event` messages carry the same generation and their extension sequence. Events arriving while the initial history is in flight are bounded and replayed only when they belong to that generation and are newer than the snapshot watermark. If the watched process later publishes a fresh finalized snapshot, the daemon sends another `agent_history` with the same request ID only to watching browsers. Switching sessions replaces the watch. An unavailable or oversized history produces `agent_history_error`. Oversized history is trimmed from the oldest end and reports additional omissions through normal snapshot truncation metadata.
 
 Incremental messages:
 
-- `agent_upsert`: process connected or its snapshot changed.
+- `agent_upsert`: process metadata changed; transcript entries remain omitted.
 - `agent_removed`: process disconnected or exceeded the heartbeat liveness timeout.
 - `agent_event`: structured Pi event.
 - `command_result`: command accepted or rejected by the extension. Results are routed only to the browser that originated the matching `commandId`; pending commands fail on timeout or process disconnection.

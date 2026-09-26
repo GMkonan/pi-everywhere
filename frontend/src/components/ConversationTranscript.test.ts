@@ -33,4 +33,18 @@ describe("ConversationTranscript", () => {
     expect(screen.queryByRole("link", { name: "unsafe" })).not.toBeInTheDocument();
     expect(document.querySelector("#transcript")).toHaveAttribute("aria-live", "polite");
   });
+
+  it("shows an accessible loading state before on-demand history arrives", () => {
+    transcriptState.set(buildTranscript({
+      instanceId: "agent-a",
+      historyTruncated: false,
+      entries: [],
+      loading: true,
+    }));
+
+    render(ConversationTranscript);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Loading history…");
+    expect(document.querySelector("#transcript")).toHaveAttribute("aria-busy", "true");
+  });
 });

@@ -10,7 +10,7 @@ Unlike RPC frontends, pi-everywhere does not start a second Pi process or reopen
 
 - Existing Pi TUI processes can join after `/reload`.
 - Full-screen session navigation groups connected processes by activity date and orders each group newest-first.
-- Active-branch history is synchronized and opens at the latest message.
+- The live-session index loads without downloading every transcript; active-branch history is fetched on demand for the selected session and opens at the latest message.
 - Thinking, tool activity, and final answers have separate presentation; final conversation text renders safe Markdown with a Catppuccin Mocha palette.
 - A lightweight animated status above the composer shows when the selected Pi process is working.
 - Optional Web Push notifications report when a working session settles, including while an installed PWA is closed.

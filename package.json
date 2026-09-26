@@ -31,7 +31,7 @@
     "build:web": "vite build --config frontend/vite.config.ts",
     "start": "node dist/src/server/index.js",
     "typecheck": "tsc --noEmit",
-    "check:web": "svelte-check --tsconfig ./frontend/tsconfig.json && node --check web/app.js && node --check web/markdown.js && node --check web/session-list.js && node --check web/sw.js && node --check frontend/public/sw.js",
+    "check:web": "svelte-check --tsconfig ./frontend/tsconfig.json && node --check web/app.js && node --check web/history-sync.js && node --check web/markdown.js && node --check web/session-list.js && node --check web/sw.js && node --check frontend/public/sw.js",
     "test": "tsx --test test/*.test.ts",
     "test:web": "vitest run --config frontend/vitest.config.ts",
     "check": "npm run typecheck && npm run check:web && npm test && npm run test:web && npm run build"

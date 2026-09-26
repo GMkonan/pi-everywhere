@@ -82,6 +82,13 @@ export interface AgentCommand {
   };
 }
 
+export interface BrowserHistoryRequest {
+  v: typeof PROTOCOL_VERSION;
+  type: "history_request";
+  instanceId: string;
+  requestId: string;
+}
+
 export interface BrowserCommand {
   v: typeof PROTOCOL_VERSION;
   type: "command";
@@ -140,14 +147,23 @@ export function isAgentMessage(value: unknown): value is AgentToServerMessage {
   return false;
 }
 
+export function isBrowserHistoryRequest(value: unknown): value is BrowserHistoryRequest {
+  if (!isRecord(value) || value.v !== PROTOCOL_VERSION || value.type !== "history_request") return false;
+  return isInstanceId(value.instanceId) && isCommandId(value.requestId);
+}
+
 export function isBrowserCommand(value: unknown): value is BrowserCommand {
   if (!isRecord(value) || value.v !== PROTOCOL_VERSION || value.type !== "command") return false;
   return (
-    typeof value.instanceId === "string" &&
+    isInstanceId(value.instanceId) &&
     isCommandId(value.commandId) &&
     typeof value.command === "string" &&
     ["prompt", "abort", "snapshot"].includes(value.command)
   );
+}
+
+function isInstanceId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 256;
 }
 
 export function isCommandId(value: unknown): value is string {

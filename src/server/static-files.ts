@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const ROOT_FILES = new Set([
   "index.html",
   "app.js",
+  "history-sync.js",
   "markdown.js",
   "session-list.js",
   "styles.css",

@@ -11,7 +11,7 @@ A browser that controls pi-everywhere can prompt a Pi agent whose tools may exec
 - Extensions connect through a Unix socket in a user-only directory; the socket mode is `0600`.
 - A random 256-bit browser token is generated with file mode `0600`.
 - Browser WebSocket upgrades require a same-host Origin and then a valid credential in the first message. Short-lived pairing creates hashed, per-device credentials; the master-token query parameter remains only as a temporary legacy fallback.
-- Session content is not logged by the daemon.
+- Session content is not logged by the daemon. The PWA fetches transcript history only for the selected live process, keeps a three-session in-memory cache, and does not persist history through the service worker.
 - Browser rendering builds allowlisted DOM nodes from Markdown and literal tool text; it never injects untrusted HTML. Links are protocol-restricted and Markdown images are not loaded automatically.
 - Web Push is disabled until a browser explicitly opts in. Subscriptions and the VAPID private key are stored in a `0600` state file under a `0700` directory.
 - Push payloads are generic and contain no prompt, answer, thinking, cwd, or tool content. Browser push providers can still observe delivery timing and endpoint metadata.

@@ -24,14 +24,15 @@ export interface TranscriptState {
   stream?: StreamState;
   nextId: number;
   revision: number;
+  loading: boolean;
 }
 
 export function emptyTranscriptState(): TranscriptState {
-  return { items: [], activitySinceUser: false, tools: {}, nextId: 1, revision: 0 };
+  return { items: [], activitySinceUser: false, tools: {}, nextId: 1, revision: 0, loading: false };
 }
 
 export function buildTranscript(input: ConversationInput): TranscriptState {
-  const state: TranscriptState = { ...emptyTranscriptState(), instanceId: input.instanceId };
+  const state: TranscriptState = { ...emptyTranscriptState(), instanceId: input.instanceId, loading: input.loading === true };
   if (input.historyTruncated) {
     appendActivity(state, `${input.omittedEntries ?? "Some"} older history entries were omitted.`, { status: true });
   }

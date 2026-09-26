@@ -13,7 +13,10 @@
   });
 </script>
 
-<div id="transcript" class="transcript" aria-live="polite" bind:this={root}>
+<div id="transcript" class="transcript" aria-live="polite" aria-busy={$transcriptState.loading} bind:this={root}>
+  {#if $transcriptState.loading && $transcriptState.items.length === 0}
+    <div class="conversation-loading" role="status">Loading history…</div>
+  {/if}
   {#each $transcriptState.items as item (item.id)}
     <TranscriptItem {item} />
   {/each}

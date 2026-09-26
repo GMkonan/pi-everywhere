@@ -5,6 +5,7 @@ import {
   isAgentHello,
   isAgentMessage,
   isBrowserCommand,
+  isBrowserHistoryRequest,
   isCommandId,
 } from "../src/shared/protocol.js";
 
@@ -59,4 +60,16 @@ test("command IDs are non-empty and bounded", () => {
   assert.equal(isCommandId("x".repeat(MAX_COMMAND_ID_LENGTH + 1)), false);
   assert.equal(isBrowserCommand(validCommand), true);
   assert.equal(isBrowserCommand({ ...validCommand, commandId: "" }), false);
+  assert.equal(isBrowserHistoryRequest({
+    v: 1,
+    type: "history_request",
+    instanceId: "agent-1",
+    requestId: "history-1",
+  }), true);
+  assert.equal(isBrowserHistoryRequest({
+    v: 1,
+    type: "history_request",
+    instanceId: "agent-1",
+    requestId: "",
+  }), false);
 });
