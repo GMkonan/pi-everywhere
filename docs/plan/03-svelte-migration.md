@@ -22,7 +22,7 @@ Keep the existing Node/TypeScript daemon, Pi extension, shared protocol, Unix so
 ## Planned work
 
 - [x] Establish the Vite/Svelte build and integrate its output with the daemon behind an explicit web-root opt-in.
-- [ ] Represent connection, process selection, history, streaming, and composer state explicitly.
+- [x] Represent connection, process selection, history, streaming, and composer state explicitly.
 - [x] Migrate the session list with behavior parity.
 - [x] Migrate the conversation transcript and live event rendering with behavior parity.
 - [ ] Migrate safe Markdown and tool rendering without introducing raw HTML rendering.
@@ -66,7 +66,9 @@ Keep the existing Node/TypeScript daemon, Pi extension, shared protocol, Unix so
 - Snapshot and reconnect updates preserve lightweight list metadata while refreshing the selected conversation without broadcasting every transcript.
 - Added a bounded serialized browser send queue and temporary capability negotiation so suspended pre-migration PWA windows continue receiving eager state until they reload.
 - Added protocol, registry, frame-budget, component, and two-browser integration coverage for metadata-only state and private on-demand history routing.
-- On the 10-process host, the authenticated initial transfer dropped from roughly 7.15 MiB across five frames to 11.3 KiB in one frame; local index arrival measured 12 ms, with the selected 200-entry history fetched separately.
+- On the 10-process host, the authenticated initial transfer dropped from roughly 7.15 MiB across five frames to 11.3 KiB in one frame; local index arrival measured 12 ms.
+- Selected history is now additionally paged: the newest 40 entries render first, older 40-entry pages load on demand, and prepends preserve the reading position. `paged-history-v1` capability negotiation keeps older lazy-history clients on full snapshots.
+- Svelte now owns the composer, including multiline keyboard behavior, bounded in-memory image previews, model capability state, and text/image submission through the legacy WebSocket controller.
 
 ## Completion signal
 

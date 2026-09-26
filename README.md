@@ -10,9 +10,10 @@ Unlike RPC frontends, pi-everywhere does not start a second Pi process or reopen
 
 - Existing Pi TUI processes can join after `/reload`.
 - Full-screen session navigation groups connected processes by activity date and orders each group newest-first.
-- The live-session index loads without downloading every transcript; active-branch history is fetched on demand for the selected session and opens at the latest message.
+- The live-session index loads without downloading every transcript; the selected session opens with its latest 40 entries and can fetch older pages without losing scroll position.
 - Thinking, tool activity, and final answers have separate presentation; final conversation text renders safe Markdown with a Catppuccin Mocha palette.
 - A lightweight animated status above the composer shows when the selected Pi process is working.
+- The mobile composer supports text and up to three privacy-normalized JPEG image attachments when the selected model accepts images.
 - Optional Web Push notifications report when a working session settles, including while an installed PWA is closed.
 - The mobile composer keeps prompting intentionally simple and queues messages with `followUp` while Pi is busy.
 - Prompts go directly to the selected Pi process.

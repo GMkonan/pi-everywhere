@@ -25,15 +25,30 @@ export interface TranscriptState {
   nextId: number;
   revision: number;
   loading: boolean;
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  canLoadOlder: boolean;
+  scrollMode: "bottom" | "prepend" | "preserve";
 }
 
 export function emptyTranscriptState(): TranscriptState {
-  return { items: [], activitySinceUser: false, tools: {}, nextId: 1, revision: 0, loading: false };
+  return {
+    items: [], activitySinceUser: false, tools: {}, nextId: 1, revision: 0,
+    loading: false, hasOlder: false, loadingOlder: false, canLoadOlder: false, scrollMode: "bottom",
+  };
 }
 
 export function buildTranscript(input: ConversationInput): TranscriptState {
-  const state: TranscriptState = { ...emptyTranscriptState(), instanceId: input.instanceId, loading: input.loading === true };
-  if (input.historyTruncated) {
+  const state: TranscriptState = {
+    ...emptyTranscriptState(),
+    instanceId: input.instanceId,
+    loading: input.loading === true,
+    hasOlder: input.hasOlder === true,
+    loadingOlder: input.loadingOlder === true,
+    canLoadOlder: input.canLoadOlder !== false,
+    scrollMode: input.scrollMode ?? "bottom",
+  };
+  if (input.historyTruncated && !input.hasOlder) {
     appendActivity(state, `${input.omittedEntries ?? "Some"} older history entries were omitted.`, { status: true });
   }
   for (const entry of input.entries) renderEntry(state, entry);
@@ -43,6 +58,7 @@ export function buildTranscript(input: ConversationInput): TranscriptState {
 
 export function applyTranscriptEvent(previous: TranscriptState, value: unknown): TranscriptState {
   const state = cloneState(previous);
+  state.scrollMode = "bottom";
   const event = asRecord(value);
   if (!event || typeof event.type !== "string") return state;
 
@@ -83,6 +99,7 @@ export function applyTranscriptEvent(previous: TranscriptState, value: unknown):
 
 export function appendSystemMessage(previous: TranscriptState, text: string): TranscriptState {
   const state = cloneState(previous);
+  state.scrollMode = "bottom";
   appendActivity(state, text, { status: true, error: true });
   state.revision += 1;
   return state;

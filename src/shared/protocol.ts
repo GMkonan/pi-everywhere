@@ -1,5 +1,8 @@
+import type { PromptPayload } from "./prompt.js";
+
 export const PROTOCOL_VERSION = 1 as const;
 export const MAX_COMMAND_ID_LENGTH = 128;
+export const MAX_HISTORY_PAGE_SIZE = 50;
 
 export interface AgentMeta {
   instanceId: string;
@@ -9,6 +12,7 @@ export interface AgentMeta {
   sessionFile?: string;
   sessionName?: string;
   model?: string;
+  supportsImages?: boolean;
   thinkingLevel: string;
   idle: boolean;
   connectedAt?: number;
@@ -76,10 +80,7 @@ export interface AgentCommand {
   instanceId: string;
   commandId: string;
   command: "prompt" | "abort" | "snapshot";
-  payload?: {
-    text?: string;
-    behavior?: DeliveryBehavior;
-  };
+  payload?: PromptPayload;
 }
 
 export interface BrowserHistoryRequest {
@@ -87,6 +88,10 @@ export interface BrowserHistoryRequest {
   type: "history_request";
   instanceId: string;
   requestId: string;
+  offset?: number;
+  limit?: number;
+  generation?: number;
+  snapshotSequence?: number;
 }
 
 export interface BrowserCommand {
@@ -95,10 +100,7 @@ export interface BrowserCommand {
   instanceId: string;
   commandId: string;
   command: "prompt" | "abort" | "snapshot";
-  payload?: {
-    text?: string;
-    behavior?: DeliveryBehavior;
-  };
+  payload?: PromptPayload;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -112,6 +114,7 @@ function isAgentMeta(value: unknown): value is AgentMeta {
     typeof value.pid === "number" &&
     typeof value.cwd === "string" &&
     typeof value.sessionId === "string" &&
+    (value.supportsImages === undefined || typeof value.supportsImages === "boolean") &&
     typeof value.thinkingLevel === "string" &&
     typeof value.idle === "boolean"
   );
@@ -149,7 +152,14 @@ export function isAgentMessage(value: unknown): value is AgentToServerMessage {
 
 export function isBrowserHistoryRequest(value: unknown): value is BrowserHistoryRequest {
   if (!isRecord(value) || value.v !== PROTOCOL_VERSION || value.type !== "history_request") return false;
-  return isInstanceId(value.instanceId) && isCommandId(value.requestId);
+  if (!isInstanceId(value.instanceId) || !isCommandId(value.requestId)) return false;
+  if (value.offset !== undefined && (!Number.isInteger(value.offset) || Number(value.offset) < 0 || Number(value.offset) > 200)) return false;
+  if (value.limit !== undefined && (!Number.isInteger(value.limit) || Number(value.limit) < 1 || Number(value.limit) > MAX_HISTORY_PAGE_SIZE)) return false;
+  if (Number(value.offset ?? 0) > 0) {
+    return Number.isInteger(value.generation) && Number(value.generation) > 0
+      && Number.isInteger(value.snapshotSequence) && Number(value.snapshotSequence) >= 0;
+  }
+  return value.generation === undefined && value.snapshotSequence === undefined;
 }
 
 export function isBrowserCommand(value: unknown): value is BrowserCommand {

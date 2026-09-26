@@ -7,6 +7,7 @@ import { dirname } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { JsonLineDecoder, encodeJsonLine } from "../shared/framing.js";
 import { defaultDeviceStatePath, defaultPushStatePath, defaultSocketPath, defaultTokenPath } from "../shared/paths.js";
+import { validatePromptPayload } from "../shared/prompt.js";
 import {
   PROTOCOL_VERSION,
   isAgentHello,
@@ -20,6 +21,7 @@ import {
 import { loadOrCreateToken, tokensEqual } from "./auth.js";
 import {
   buildBrowserHistoryMessage,
+  buildBrowserHistoryPage,
   buildBrowserStateMessages,
   buildLegacyBrowserStateMessages,
 } from "./browser-state.js";
@@ -61,6 +63,7 @@ interface AuthIdentity {
 }
 interface BrowserConnection extends AuthIdentity {
   lazyHistory: boolean;
+  pagedHistory: boolean;
 }
 
 interface QueuedBrowserMessage {
@@ -76,7 +79,11 @@ interface BrowserSendQueue {
 
 const browsers = new Map<WebSocket, BrowserConnection>();
 const browserSendQueues = new Map<WebSocket, BrowserSendQueue>();
-const historyWatches = new Map<WebSocket, { instanceId: string; requestId: string }>();
+const historyWatches = new Map<WebSocket, {
+  instanceId: string;
+  requestId: string;
+  pageSize?: number;
+}>();
 const webSocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES });
 
 function sendBrowser(socket: WebSocket, message: unknown, onSent?: () => void): boolean {
@@ -137,9 +144,17 @@ function sendState(socket: WebSocket, lazyHistory: boolean): void {
   }
 }
 
-function sendHistory(socket: WebSocket, record: AgentRecord, requestId: string): void {
+function sendHistory(
+  socket: WebSocket,
+  record: AgentRecord,
+  requestId: string,
+  page?: { offset: number; limit: number },
+): void {
   try {
-    sendBrowser(socket, buildBrowserHistoryMessage(registry.toPublic(record), requestId, MAX_PAYLOAD_BYTES));
+    const agent = registry.toPublic(record);
+    sendBrowser(socket, page
+      ? buildBrowserHistoryPage(agent, requestId, MAX_PAYLOAD_BYTES, page.offset, page.limit)
+      : buildBrowserHistoryMessage(agent, requestId, MAX_PAYLOAD_BYTES));
   } catch {
     sendBrowser(socket, {
       v: PROTOCOL_VERSION,
@@ -149,6 +164,16 @@ function sendHistory(socket: WebSocket, record: AgentRecord, requestId: string):
       error: "Session history exceeds the browser payload limit",
     });
   }
+}
+
+function sendHistoryError(socket: WebSocket, instanceId: string, requestId: string, error: string): void {
+  sendBrowser(socket, {
+    v: PROTOCOL_VERSION,
+    type: "agent_history_error",
+    instanceId,
+    requestId,
+    error,
+  });
 }
 
 function broadcastAgent(record: AgentRecord): void {
@@ -165,7 +190,9 @@ function broadcastAgent(record: AgentRecord): void {
     }
   }
   for (const [browser, watch] of historyWatches) {
-    if (watch.instanceId === record.instanceId) sendHistory(browser, record, watch.requestId);
+    if (watch.instanceId === record.instanceId) {
+      sendHistory(browser, record, watch.requestId, watch.pageSize ? { offset: 0, limit: watch.pageSize } : undefined);
+    }
   }
 }
 
@@ -248,13 +275,16 @@ webSocketServer.on("connection", (socket, request) => {
       kind: connection.kind,
       device: connection.device,
       lazyHistory: connection.lazyHistory,
+      pagedHistory: connection.pagedHistory,
     });
     sendState(socket, connection.lazyHistory);
   };
 
   try {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
-    if (tokensEqual(token, url.searchParams.get("token"))) activate({ kind: "master", lazyHistory: false });
+    if (tokensEqual(token, url.searchParams.get("token"))) {
+      activate({ kind: "master", lazyHistory: false, pagedHistory: false });
+    }
   } catch {
     socket.close(1008, "authentication required");
   }
@@ -273,20 +303,26 @@ webSocketServer.on("connection", (socket, request) => {
     try {
       const value: unknown = JSON.parse(data.toString());
       if (isBrowserHistoryRequest(value)) {
-        if (!browsers.get(socket)?.lazyHistory) throw new Error("History requests require lazy-history support");
+        const connection = browsers.get(socket);
+        if (!connection?.lazyHistory) throw new Error("History requests require lazy-history support");
         const record = registry.get(value.instanceId);
         if (!record) {
-          sendBrowser(socket, {
-            v: PROTOCOL_VERSION,
-            type: "agent_history_error",
-            instanceId: value.instanceId,
-            requestId: value.requestId,
-            error: "Pi process is no longer connected",
-          });
+          sendHistoryError(socket, value.instanceId, value.requestId, "Pi process is no longer connected");
           return;
         }
-        historyWatches.set(socket, { instanceId: value.instanceId, requestId: value.requestId });
-        sendHistory(socket, record, value.requestId);
+        const offset = value.offset ?? 0;
+        if (offset > 0) {
+          if (!connection.pagedHistory) throw new Error("Paged history was not negotiated");
+          if (value.generation !== record.generation || value.snapshotSequence !== record.snapshotSequence) {
+            sendHistoryError(socket, value.instanceId, value.requestId, "Session history changed; reload the recent messages");
+            return;
+          }
+          sendHistory(socket, record, value.requestId, { offset, limit: value.limit ?? 40 });
+          return;
+        }
+        const pageSize = connection.pagedHistory ? value.limit ?? 40 : undefined;
+        historyWatches.set(socket, { instanceId: value.instanceId, requestId: value.requestId, ...(pageSize ? { pageSize } : {}) });
+        sendHistory(socket, record, value.requestId, pageSize ? { offset: 0, limit: pageSize } : undefined);
         return;
       }
       if (!isBrowserCommand(value)) throw new Error("Invalid browser command");
@@ -455,8 +491,10 @@ async function authenticateWebSocket(encoded: string): Promise<BrowserConnection
     || typeof value.credential !== "string") return undefined;
   const identity = await authenticateCredential(value.credential);
   if (!identity) return undefined;
-  const lazyHistory = Array.isArray(value.capabilities) && value.capabilities.includes("lazy-history-v1");
-  return { ...identity, lazyHistory };
+  const capabilities = Array.isArray(value.capabilities) ? value.capabilities : [];
+  const lazyHistory = capabilities.includes("lazy-history-v1");
+  const pagedHistory = lazyHistory && capabilities.includes("paged-history-v1");
+  return { ...identity, lazyHistory, pagedHistory };
 }
 
 async function authenticateCredential(credential: string | null): Promise<AuthIdentity | undefined> {
@@ -494,12 +532,7 @@ function routeBrowserCommand(browser: WebSocket, command: AgentCommand): void {
     return;
   }
 
-  if (command.command === "prompt") {
-    const text = command.payload?.text;
-    if (typeof text !== "string" || !text.trim() || text.length > 100_000) {
-      throw new Error("Prompt must contain between 1 and 100000 characters");
-    }
-  }
+  if (command.command === "prompt") command.payload = validatePromptPayload(command.payload);
   if (record.socket.writableLength > MAX_PENDING_BYTES) {
     sendBrowser(browser, {
       v: PROTOCOL_VERSION,

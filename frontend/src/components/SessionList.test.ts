@@ -18,7 +18,11 @@ describe("SessionList", () => {
   it("renders live sessions, selection, activity, and routes taps through the bridge", async () => {
     const selectAgent = vi.fn();
     installUiBridge();
-    window.__PI_EVERYWHERE_SVELTE__?.bindActions({ selectAgent });
+    window.__PI_EVERYWHERE_SVELTE__?.bindActions({
+      selectAgent,
+      loadOlderHistory: () => undefined,
+      sendPrompt: () => undefined,
+    });
     const now = Date.now();
     sessionListState.set({
       agents: [agent("older", "Older task", true, now - 120_000), agent("working", "Working task", false, now)],

@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import { describe, expect, it } from "vitest";
 import { buildTranscript } from "../lib/transcript";
-import { transcriptState } from "../lib/ui-bridge";
+import { installUiBridge, transcriptState } from "../lib/ui-bridge";
 import ConversationTranscript from "./ConversationTranscript.svelte";
 
 describe("ConversationTranscript", () => {
@@ -32,6 +32,27 @@ describe("ConversationTranscript", () => {
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
     expect(screen.queryByRole("link", { name: "unsafe" })).not.toBeInTheDocument();
     expect(document.querySelector("#transcript")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("loads older history through the controller bridge", async () => {
+    installUiBridge();
+    let requested = "";
+    window.__PI_EVERYWHERE_SVELTE__?.bindActions({
+      selectAgent: () => undefined,
+      loadOlderHistory: (instanceId) => { requested = instanceId; },
+      sendPrompt: () => undefined,
+    });
+    transcriptState.set(buildTranscript({
+      instanceId: "agent-a",
+      historyTruncated: false,
+      entries: [],
+      hasOlder: true,
+      canLoadOlder: true,
+    }));
+
+    render(ConversationTranscript);
+    await fireEvent.click(screen.getByRole("button", { name: "Load older messages" }));
+    expect(requested).toBe("agent-a");
   });
 
   it("shows an accessible loading state before on-demand history arrives", () => {

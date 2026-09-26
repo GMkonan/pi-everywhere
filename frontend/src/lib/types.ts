@@ -30,8 +30,22 @@ export interface SessionListState {
   syncing: boolean;
 }
 
+export interface BrowserPromptImage {
+  mimeType: "image/jpeg";
+  data: string;
+}
+
+export interface ComposerState {
+  selectedId?: string;
+  connected: boolean;
+  supportsImages: boolean;
+  working: boolean;
+}
+
 export interface LegacyUiActions {
   selectAgent(instanceId: string): void;
+  loadOlderHistory(instanceId: string): void;
+  sendPrompt(payload: { text?: string; images?: BrowserPromptImage[]; behavior: "followUp" | "steer" }): string | undefined;
 }
 
 export interface ConversationInput {
@@ -40,6 +54,10 @@ export interface ConversationInput {
   historyTruncated: boolean;
   omittedEntries?: number;
   loading?: boolean;
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  canLoadOlder?: boolean;
+  scrollMode?: "bottom" | "prepend" | "preserve";
 }
 
 export interface SvelteUiBridge {
@@ -48,4 +66,6 @@ export interface SvelteUiBridge {
   renderConversation(input: ConversationInput): void;
   applyConversationEvent(event: unknown): void;
   appendSystemMessage(text: string): void;
+  renderComposer(state: ComposerState): void;
+  resolvePrompt(commandId: string, ok: boolean, error?: string): void;
 }

@@ -12,6 +12,7 @@ const DEVICE_CREDENTIAL_KEY = "pi-everywhere-device";
 const LEGACY_TOKEN_KEY = "pi-everywhere-token";
 const MAX_STATE_QUEUE_BYTES = 2 * 1024 * 1024;
 const MAX_HISTORY_CACHE = 3;
+const HISTORY_PAGE_SIZE = 40;
 const WORKING_PHRASES = [
   "Forging code…",
   "Connecting the dots…",
@@ -27,6 +28,7 @@ let reconnectTimer;
 let selectedId;
 let selectedRemovalTimer;
 let activeHistoryRequest;
+let olderHistoryRequest;
 let historyCacheOrder = [];
 let restoreSelectedOnReconnect = false;
 let reconnectEnabled = true;
@@ -66,7 +68,7 @@ const elements = {
   toast: document.querySelector("#toast"),
 };
 
-globalThis.__PI_EVERYWHERE_SVELTE__?.bindActions({ selectAgent });
+globalThis.__PI_EVERYWHERE_SVELTE__?.bindActions({ selectAgent, loadOlderHistory, sendPrompt });
 
 async function connect() {
   const credential = currentCredential();
@@ -104,7 +106,9 @@ async function connect() {
       v: PROTOCOL_VERSION,
       type: "authenticate",
       credential,
-      capabilities: ["lazy-history-v1"],
+      capabilities: globalThis.__PI_EVERYWHERE_SVELTE__
+        ? ["lazy-history-v1", "paged-history-v1"]
+        : ["lazy-history-v1"],
     }));
   });
   socket.addEventListener("message", ({ data }) => {
@@ -113,6 +117,7 @@ async function connect() {
   });
   socket.addEventListener("close", () => {
     activeHistoryRequest = undefined;
+    olderHistoryRequest = undefined;
     setConnection("offline");
     if (reconnectEnabled) reconnectTimer = setTimeout(() => void connect(), 2000);
   });
@@ -138,6 +143,7 @@ function handleServerMessage(message) {
     if (message.reset !== false) {
       agents.clear();
       historyCacheOrder = [];
+      olderHistoryRequest = undefined;
       queuedServerMessages = [];
       queuedServerMessageBytes = 0;
       stateSyncing = message.complete === false;
@@ -181,12 +187,16 @@ function handleServerMessage(message) {
     if (sameSession && previous?.historyLoaded) {
       message.agent.snapshot = previous.snapshot;
       message.agent.historyLoaded = true;
+      message.agent.historyHasOlder = previous.historyHasOlder;
+      message.agent.historyLoadedCount = previous.historyLoadedCount;
+      message.agent.historyLoadingOlder = previous.historyLoadingOlder;
     }
     if (activeHistoryRequest?.instanceId === message.agent.instanceId && activeHistoryRequest.generation !== message.agent.generation) {
       activeHistoryRequest.generation = message.agent.generation;
       activeHistoryRequest.awaiting = true;
       activeHistoryRequest.events = [];
       activeHistoryRequest.eventBytes = 0;
+      olderHistoryRequest = undefined;
     }
     agents.set(message.agent.instanceId, message.agent);
     renderAgents();
@@ -200,6 +210,29 @@ function handleServerMessage(message) {
     return;
   }
   if (message.type === "agent_history") {
+    if (olderHistoryRequest?.instanceId === message.instanceId && olderHistoryRequest.requestId === message.requestId) {
+      const previous = agents.get(message.instanceId);
+      const request = olderHistoryRequest;
+      olderHistoryRequest = undefined;
+      if (!previous
+        || selectedId !== message.instanceId
+        || !previous.meta.idle
+        || previous.generation !== message.agent?.generation
+        || previous.snapshotSequence !== message.agent?.snapshotSequence
+        || message.page?.offset !== request.offset) return;
+      previous.snapshot = {
+        ...previous.snapshot,
+        entries: [...(message.agent.snapshot?.entries ?? []), ...(previous.snapshot?.entries ?? [])],
+      };
+      previous.historyHasOlder = message.page?.hasOlder === true;
+      previous.historyLoadedCount = request.offset + (message.page?.count ?? 0);
+      previous.historyLoadingOlder = false;
+      previous.historyPrepend = true;
+      rememberHistory(message.instanceId);
+      renderSelected();
+      previous.historyPrepend = false;
+      return;
+    }
     if (activeHistoryRequest?.instanceId !== message.instanceId || activeHistoryRequest.requestId !== message.requestId) return;
     const previous = agents.get(message.instanceId);
     if (!previous
@@ -207,10 +240,14 @@ function handleServerMessage(message) {
       || previous.generation !== message.agent?.generation
       || activeHistoryRequest.generation !== message.agent?.generation) return;
     const queuedEvents = activeHistoryRequest.awaiting ? activeHistoryRequest.events : [];
+    if (olderHistoryRequest?.instanceId === message.instanceId) olderHistoryRequest = undefined;
     const agent = {
       ...message.agent,
       lastActivityAt: Math.max(previous.lastActivityAt ?? 0, message.agent.lastActivityAt ?? 0),
       historyLoaded: true,
+      historyHasOlder: message.page?.hasOlder === true,
+      historyLoadedCount: message.page?.count ?? message.agent.snapshot?.entries?.length ?? 0,
+      historyLoadingOlder: false,
     };
     agents.set(message.instanceId, agent);
     rememberHistory(message.instanceId);
@@ -227,6 +264,20 @@ function handleServerMessage(message) {
     return;
   }
   if (message.type === "agent_history_error") {
+    if (olderHistoryRequest?.instanceId === message.instanceId && olderHistoryRequest.requestId === message.requestId) {
+      olderHistoryRequest = undefined;
+      const agent = agents.get(message.instanceId);
+      if (agent) {
+        agent.historyLoadingOlder = false;
+        agent.historyPreserve = true;
+      }
+      if (selectedId === message.instanceId) {
+        renderSelected();
+        if (agent) agent.historyPreserve = false;
+        showToast(message.error || "Older history could not be loaded.");
+      }
+      return;
+    }
     if (activeHistoryRequest?.instanceId !== message.instanceId || activeHistoryRequest.requestId !== message.requestId) return;
     activeHistoryRequest = undefined;
     if (selectedId === message.instanceId) {
@@ -238,6 +289,7 @@ function handleServerMessage(message) {
   if (message.type === "agent_removed") {
     agents.delete(message.instanceId);
     historyCacheOrder = historyCacheOrder.filter((instanceId) => instanceId !== message.instanceId);
+    if (olderHistoryRequest?.instanceId === message.instanceId) olderHistoryRequest = undefined;
     if (activeHistoryRequest?.instanceId === message.instanceId) {
       activeHistoryRequest.awaiting = true;
       activeHistoryRequest.events = [];
@@ -261,6 +313,10 @@ function handleServerMessage(message) {
       let listChanged = touchAgentActivity(agent, message.event);
       if (message.event?.type === "agent_start" && agent.meta.idle) {
         agent.meta.idle = false;
+        if (olderHistoryRequest?.instanceId === message.instanceId) {
+          olderHistoryRequest = undefined;
+          agent.historyLoadingOlder = false;
+        }
         listChanged = true;
       }
       if (message.event?.type === "agent_settled" && !agent.meta.idle) {
@@ -268,7 +324,14 @@ function handleServerMessage(message) {
         listChanged = true;
       }
       if (listChanged) renderAgents();
-      if (selectedId === message.instanceId) syncWorkingIndicator();
+      if (selectedId === message.instanceId) {
+        if (listChanged) {
+          agent.historyPreserve = true;
+          renderSelected();
+          agent.historyPreserve = false;
+        }
+        syncWorkingIndicator();
+      }
     }
     if (selectedId === message.instanceId) {
       if (activeHistoryRequest?.instanceId === message.instanceId && activeHistoryRequest.awaiting) {
@@ -289,8 +352,11 @@ function handleServerMessage(message) {
     }
     return;
   }
-  if (message.type === "command_result" && selectedId === message.instanceId && !message.ok) {
-    showSystem(`Command failed: ${message.error ?? "unknown error"}`);
+  if (message.type === "command_result") {
+    globalThis.__PI_EVERYWHERE_SVELTE__?.resolvePrompt(message.commandId, message.ok === true, message.error);
+    if (selectedId === message.instanceId && !message.ok) {
+      showSystem(`Command failed: ${message.error ?? "unknown error"}`);
+    }
   }
   if (message.type === "error") showSystem(`Bridge error: ${message.error}`);
 }
@@ -392,8 +458,37 @@ function requestHistory(instanceId) {
     type: "history_request",
     instanceId,
     requestId,
+    limit: HISTORY_PAGE_SIZE,
   }));
   if (!agent.historyLoaded && selectedId === instanceId) renderSelected();
+}
+
+function loadOlderHistory(instanceId) {
+  const agent = agents.get(instanceId);
+  if (!agent
+    || selectedId !== instanceId
+    || !agent.historyLoaded
+    || !agent.historyHasOlder
+    || !agent.meta.idle
+    || olderHistoryRequest
+    || socket?.readyState !== WebSocket.OPEN) return;
+  const requestId = crypto.randomUUID();
+  const offset = agent.historyLoadedCount ?? agent.snapshot?.entries?.length ?? 0;
+  olderHistoryRequest = { instanceId, requestId, offset };
+  agent.historyLoadingOlder = true;
+  agent.historyPreserve = true;
+  renderSelected();
+  agent.historyPreserve = false;
+  socket.send(JSON.stringify({
+    v: PROTOCOL_VERSION,
+    type: "history_request",
+    instanceId,
+    requestId,
+    offset,
+    limit: HISTORY_PAGE_SIZE,
+    generation: agent.generation,
+    snapshotSequence: agent.snapshotSequence,
+  }));
 }
 
 function rememberHistory(instanceId) {
@@ -406,6 +501,9 @@ function rememberHistory(instanceId) {
     if (!agent) continue;
     agent.snapshot = { ...agent.snapshot, entries: [] };
     agent.historyLoaded = false;
+    agent.historyHasOlder = false;
+    agent.historyLoadedCount = 0;
+    agent.historyLoadingOlder = false;
   }
 }
 
@@ -440,6 +538,10 @@ function renderSelected() {
       historyTruncated: Boolean(agent.snapshot?.historyTruncated),
       omittedEntries: agent.snapshot?.omittedEntries,
       loading: !agent.historyLoaded,
+      hasOlder: agent.historyHasOlder === true,
+      loadingOlder: agent.historyLoadingOlder === true,
+      canLoadOlder: agent.meta.idle,
+      scrollMode: agent.historyPrepend ? "prepend" : agent.historyPreserve ? "preserve" : "bottom",
     });
     syncWorkingIndicator();
     return;
@@ -715,39 +817,51 @@ function showSystem(text) {
   else appendActivityText(text, { status: true, error: true });
 }
 
+function sendPrompt(payload) {
+  const agent = selectedId ? agents.get(selectedId) : undefined;
+  if (payload.images?.length && agent?.meta?.supportsImages !== true) {
+    showToast("The selected model does not support images.");
+    return undefined;
+  }
+  return sendCommand("prompt", payload);
+}
+
 function sendCommand(command, payload) {
   if (!selectedId || socket?.readyState !== WebSocket.OPEN) {
     showSystem("Not connected. Your message was not sent.");
-    return false;
+    return undefined;
   }
+  const commandId = crypto.randomUUID();
   socket.send(JSON.stringify({
     v: PROTOCOL_VERSION,
     type: "command",
     instanceId: selectedId,
-    commandId: crypto.randomUUID(),
+    commandId,
     command,
     ...(payload ? { payload } : {}),
   }));
-  return true;
+  return commandId;
 }
 
-elements.form.addEventListener("submit", (event) => {
-  event.preventDefault();
-  const text = elements.prompt.value.trim();
-  if (!text) return;
-  if (sendCommand("prompt", { text, behavior: "followUp" })) {
-    elements.prompt.value = "";
-    resizePrompt();
-  }
-});
-
-elements.prompt.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.isComposing) {
+if (!globalThis.__PI_EVERYWHERE_SVELTE__) {
+  elements.form.addEventListener("submit", (event) => {
     event.preventDefault();
-    elements.form.requestSubmit();
-  }
-});
-elements.prompt.addEventListener("input", resizePrompt);
+    const text = elements.prompt.value.trim();
+    if (!text) return;
+    if (sendPrompt({ text, behavior: "followUp" })) {
+      elements.prompt.value = "";
+      resizePrompt();
+    }
+  });
+
+  elements.prompt.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.isComposing) {
+      event.preventDefault();
+      elements.form.requestSubmit();
+    }
+  });
+  elements.prompt.addEventListener("input", resizePrompt);
+}
 elements.openNavigation.addEventListener("click", () => setNavigation(true));
 elements.closeNavigation.addEventListener("click", () => setNavigation(false));
 elements.abort.addEventListener("click", () => sendCommand("abort"));
@@ -771,6 +885,12 @@ elements.notifications.addEventListener("click", () => void toggleNotifications(
 function syncWorkingIndicator() {
   const agent = selectedId ? agents.get(selectedId) : undefined;
   const working = Boolean(agent && !agent.meta.idle);
+  globalThis.__PI_EVERYWHERE_SVELTE__?.renderComposer({
+    selectedId: agent?.instanceId,
+    connected: socket?.readyState === WebSocket.OPEN && elements.connection.textContent === "online",
+    supportsImages: agent?.meta?.supportsImages === true,
+    working,
+  });
   const wasHidden = elements.workingIndicator.hidden;
   const wasNearBottom = elements.transcript.scrollHeight - elements.transcript.scrollTop - elements.transcript.clientHeight < 80;
   elements.workingIndicator.hidden = !working;
@@ -964,6 +1084,7 @@ function showToast(text) {
 function setConnection(status) {
   elements.connection.textContent = status;
   elements.connectionDot.className = `connection-dot ${status === "online" ? "online" : "offline"}`;
+  syncWorkingIndicator();
 }
 
 function resizePrompt() {

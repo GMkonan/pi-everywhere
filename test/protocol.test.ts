@@ -72,4 +72,30 @@ test("command IDs are non-empty and bounded", () => {
     instanceId: "agent-1",
     requestId: "",
   }), false);
+  assert.equal(isBrowserHistoryRequest({
+    v: 1,
+    type: "history_request",
+    instanceId: "agent-1",
+    requestId: "history-2",
+    offset: 40,
+    limit: 40,
+    generation: 2,
+    snapshotSequence: 5,
+  }), true);
+  assert.equal(isBrowserHistoryRequest({
+    v: 1,
+    type: "history_request",
+    instanceId: "agent-1",
+    requestId: "history-3",
+    offset: 40,
+    limit: 51,
+  }), false);
+  assert.equal(isBrowserHistoryRequest({
+    v: 1,
+    type: "history_request",
+    instanceId: "agent-1",
+    requestId: "history-4",
+    offset: 40,
+    limit: 40,
+  }), false);
 });

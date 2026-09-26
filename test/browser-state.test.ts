@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   buildBrowserHistoryMessage,
+  buildBrowserHistoryPage,
   buildBrowserStateMessages,
   buildLegacyBrowserStateMessages,
 } from "../src/server/browser-state.js";
@@ -77,6 +78,25 @@ test("legacy browser state retains eager history during the capability migration
   assert.equal(messages.length, 1);
   assert.equal(messages[0]?.complete, true);
   assert.deepEqual(messages[0]?.agents[0]?.snapshot.entries, [{ text: "history" }]);
+});
+
+test("paged history returns newest entries first without marking retrievable entries omitted", () => {
+  const entries = Array.from({ length: 95 }, (_, id) => ({ id }));
+  const source = agent("agent", entries);
+  source.snapshot.historyTruncated = true;
+  source.snapshot.omittedEntries = 3;
+
+  const newest = buildBrowserHistoryPage(source, "newest", 100_000, 0, 40);
+  const older = buildBrowserHistoryPage(source, "older", 100_000, 40, 40);
+  const oldest = buildBrowserHistoryPage(source, "oldest", 100_000, 80, 40);
+
+  assert.deepEqual(newest.agent.snapshot.entries, entries.slice(55));
+  assert.deepEqual(newest.page, { offset: 0, count: 40, hasOlder: true });
+  assert.deepEqual(older.agent.snapshot.entries, entries.slice(15, 55));
+  assert.deepEqual(older.page, { offset: 40, count: 40, hasOlder: true });
+  assert.deepEqual(oldest.agent.snapshot.entries, entries.slice(0, 15));
+  assert.deepEqual(oldest.page, { offset: 80, count: 15, hasOlder: false });
+  assert.equal(newest.agent.snapshot.omittedEntries, 3);
 });
 
 test("on-demand history trims oldest snapshot entries when its frame exceeds the budget", () => {

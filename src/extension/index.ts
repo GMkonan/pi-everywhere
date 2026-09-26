@@ -4,6 +4,7 @@ import { defaultSocketPath } from "../shared/paths.ts";
 import type { AgentCommand, AgentMeta, AgentSnapshot } from "../shared/protocol.ts";
 import { claimProcessRuntime, getProcessInstanceId } from "./process-identity.ts";
 import { buildBoundedSnapshot } from "./snapshot.ts";
+import { validatePromptPayload } from "../shared/prompt.ts";
 
 const STATUS_KEY = "pi-everywhere";
 
@@ -36,6 +37,7 @@ export default function piEverywhere(pi: ExtensionAPI) {
       ...(sessionFile ? { sessionFile } : {}),
       ...(sessionName ? { sessionName } : {}),
       ...(model ? { model: `${model.provider}/${model.id}` } : {}),
+      supportsImages: model?.input.includes("image") === true,
       thinkingLevel: activeContext.thinkingLevel ?? "off",
       idle: activeContext.isIdle(),
     };
@@ -62,14 +64,23 @@ export default function piEverywhere(pi: ExtensionAPI) {
       return;
     }
 
-    const text = command.payload?.text?.trim();
-    if (!text) throw new Error("Prompt text is required");
+    const payload = validatePromptPayload(command.payload);
+    const images = payload.images ?? [];
+    if (images.length > 0 && activeContext.model?.input.includes("image") !== true) {
+      throw new Error("The selected model does not support image input");
+    }
+    const content = images.length > 0
+      ? [
+          ...(payload.text ? [{ type: "text" as const, text: payload.text }] : []),
+          ...images.map((image) => ({ type: "image" as const, mimeType: image.mimeType, data: image.data })),
+        ]
+      : payload.text ?? "";
 
     if (activeContext.isIdle()) {
-      pi.sendUserMessage(text);
+      pi.sendUserMessage(content);
     } else {
-      pi.sendUserMessage(text, {
-        deliverAs: command.payload?.behavior === "steer" ? "steer" : "followUp",
+      pi.sendUserMessage(content, {
+        deliverAs: payload.behavior === "steer" ? "steer" : "followUp",
       });
     }
     bridge.sendCommandResult(command.commandId, true);

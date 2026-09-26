@@ -17,6 +17,11 @@ export interface BrowserHistoryMessage {
   instanceId: string;
   requestId: string;
   agent: PublicAgent & { historyLoaded: true };
+  page?: {
+    offset: number;
+    count: number;
+    hasOlder: boolean;
+  };
 }
 
 /** Build an ordered, metadata-only registry transfer bounded per WebSocket frame. */
@@ -45,6 +50,27 @@ export function buildLegacyBrowserStateMessages(
   const fitted = agents.map((agent) => buildBrowserHistoryMessage(agent, "legacy", maximumBytes).agent);
   const chunks = packAgents(fitted, maximumBytes);
   return chunks.map((chunk, index) => stateMessage(chunk, index === 0, index === chunks.length - 1));
+}
+
+/** Build a newest-first offset page while preserving chronological order within the page. */
+export function buildBrowserHistoryPage(
+  agent: PublicAgent,
+  requestId: string,
+  maximumBytes: number,
+  offset: number,
+  limit: number,
+): BrowserHistoryMessage {
+  if (maximumBytes <= 0) throw new Error("Browser history byte budget must be positive");
+  const entries = agent.snapshot.entries;
+  const end = Math.max(0, entries.length - offset);
+  const available = Math.min(limit, end);
+  for (let count = available; count >= 0; count -= 1) {
+    const start = end - count;
+    const paged = withEntrySlice(agent, entries.slice(start, end));
+    const message = historyMessage(paged, requestId, { offset, count, hasOlder: start > 0 });
+    if (encodedBytes(message) <= maximumBytes) return message;
+  }
+  throw new Error(`Agent ${agent.instanceId} metadata exceeds the browser history budget`);
 }
 
 /** Build one on-demand history response, trimming only if its transport envelope requires it. */
@@ -103,14 +129,24 @@ function withNewestEntries(agent: PublicAgent, keep: number): PublicAgent {
   const sourceEntries = agent.snapshot.entries;
   const removed = sourceEntries.length - keep;
   const omittedEntries = (agent.snapshot.omittedEntries ?? 0) + removed;
+  const newest = withEntrySlice(agent, keep > 0 ? sourceEntries.slice(-keep) : []);
+  return {
+    ...newest,
+    snapshot: {
+      ...newest.snapshot,
+      ...(omittedEntries > 0 ? { historyTruncated: true, omittedEntries } : {}),
+    },
+  };
+}
+
+function withEntrySlice(agent: PublicAgent, entries: unknown[]): PublicAgent {
   return {
     ...agent,
     meta: { ...agent.meta },
     snapshot: {
       ...agent.snapshot,
       meta: { ...agent.snapshot.meta },
-      entries: keep > 0 ? sourceEntries.slice(-keep) : [],
-      ...(omittedEntries > 0 ? { historyTruncated: true, omittedEntries } : {}),
+      entries,
     },
   };
 }
@@ -119,13 +155,18 @@ function stateMessage(agents: BrowserStateAgent[], reset: boolean, complete: boo
   return { v: PROTOCOL_VERSION, type: "state", agents, reset, complete };
 }
 
-function historyMessage(agent: PublicAgent, requestId: string): BrowserHistoryMessage {
+function historyMessage(
+  agent: PublicAgent,
+  requestId: string,
+  page?: BrowserHistoryMessage["page"],
+): BrowserHistoryMessage {
   return {
     v: PROTOCOL_VERSION,
     type: "agent_history",
     instanceId: agent.instanceId,
     requestId,
     agent: { ...agent, historyLoaded: true },
+    ...(page ? { page } : {}),
   };
 }
 

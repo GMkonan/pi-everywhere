@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Composer from "./components/Composer.svelte";
   import ConversationTranscript from "./components/ConversationTranscript.svelte";
   import Icon from "./components/Icon.svelte";
   import SessionList from "./components/SessionList.svelte";
@@ -50,10 +51,7 @@
         <span id="working-phrase" aria-hidden="true">Forging code…</span>
         <span class="sr-only">Pi is working</span>
       </div>
-      <form id="prompt-form" class="composer">
-        <textarea id="prompt" rows="1" placeholder="Message Pi…" aria-label="Message Pi" required></textarea>
-        <button type="submit" class="send-button" aria-label="Send message" title="Send message (Ctrl/⌘+Enter)"><Icon name="send" /></button>
-      </form>
+      <Composer />
     </footer>
   </section>
 </main>

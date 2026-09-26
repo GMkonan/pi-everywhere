@@ -6,15 +6,21 @@ Make controlling a live Pi process from a phone feel intentional rather than lik
 
 ## Experience areas
 
-- [ ] Refine safe areas, scrolling, virtual-keyboard behavior, touch targets, and composer ergonomics.
+- [ ] Refine safe areas, scrolling, virtual-keyboard behavior, touch targets, and composer ergonomics. The Svelte composer and paged-history viewport preservation are implemented; physical iPhone/Android validation remains.
 - [ ] Make reconnecting and stale/offline state understandable without losing finalized history.
 - [ ] Improve safe Markdown and tool cards, using focused sheets or progressive disclosure where useful.
 - [ ] Make queued `followUp` and `steer` behavior visible and controllable.
 - [ ] Improve completion and attention notifications with useful deep-link behavior.
 - [ ] Add model and thinking-level controls through supported Pi extension APIs.
-- [ ] Add image prompts with explicit size, type, and transport limits.
+- [x] Add image prompts with explicit size, type, and transport limits.
 - [ ] Consider active session-tree navigation only after lifecycle behavior is covered by tests.
 - [ ] Validate every major interaction on physical iPhone and Android devices through Tailscale Serve.
+
+## Implementation notes
+
+- Selected histories open with the newest 40 snapshot entries; older pages are loaded explicitly in idle sessions and prepended without jumping the viewport.
+- The composer accepts text-only, image-only, or mixed prompts on image-capable models. It normalizes up to three files to metadata-free JPEGs at 1600 px maximum, 300 KiB each, and 900 KiB combined.
+- The daemon and extension revalidate image payloads before Pi receives flat `ImageContent` blocks. Attachments stay in memory and are cleared after sending or changing sessions.
 
 ## Deferred
 

@@ -82,7 +82,7 @@ Other extension messages are `heartbeat` and `command_result`. The daemon remove
 
 Commands:
 
-- `prompt`: inject a user message. `behavior` is used only while Pi is busy.
+- `prompt`: inject a user message. The payload must contain trimmed text or up to three validated JPEG images; `behavior` is used only while Pi is busy. Images are bare canonical base64 with `mimeType: "image/jpeg"`, at most 300 KiB each and 900 KiB combined.
 - `abort`: call the owning session context's abort operation.
 - `snapshot`: request a fresh metadata/history snapshot.
 
@@ -91,10 +91,10 @@ Commands:
 New browser clients open `/ws` without a credential in the URL and authenticate as their first WebSocket message:
 
 ```json
-{ "v": 1, "type": "authenticate", "credential": "device-credential", "capabilities": ["lazy-history-v1"] }
+{ "v": 1, "type": "authenticate", "credential": "device-credential", "capabilities": ["lazy-history-v1", "paged-history-v1"] }
 ```
 
-The daemon answers with `authenticated` and then begins state transfer. A five-second timeout closes sockets that do not authenticate. `lazy-history-v1` advertises support for the metadata-only index and on-demand transcript messages. During one migration window, clients without that capability receive the previous eager full-history state/upserts so an already-running suspended PWA remains usable. During migration only, a valid master token in the legacy WebSocket query parameter is still accepted.
+The daemon answers with `authenticated` and then begins state transfer. A five-second timeout closes sockets that do not authenticate. `lazy-history-v1` advertises support for the metadata-only index and on-demand transcript messages; `paged-history-v1` adds bounded newest-first transcript pages. During one migration window, clients without that capability receive the previous eager full-history state/upserts so an already-running suspended PWA remains usable. During migration only, a valid master token in the legacy WebSocket query parameter is still accepted.
 
 Pairing uses HTTP:
 
@@ -118,16 +118,16 @@ After authentication, a `lazy-history-v1` browser receives one or more bounded, 
 When a session is selected, the browser requests only that live process's history:
 
 ```json
-{ "v": 1, "type": "history_request", "instanceId": "1234-uuid", "requestId": "request-uuid" }
+{ "v": 1, "type": "history_request", "instanceId": "1234-uuid", "requestId": "request-uuid", "limit": 40 }
 ```
 
 The daemon responds only to that browser and treats it as the browser's current history watch:
 
 ```json
-{ "v": 1, "type": "agent_history", "instanceId": "1234-uuid", "requestId": "request-uuid", "agent": {} }
+{ "v": 1, "type": "agent_history", "instanceId": "1234-uuid", "requestId": "request-uuid", "page": { "offset": 0, "count": 40, "hasOlder": true }, "agent": {} }
 ```
 
-The response's agent has `historyLoaded: true`, a connection `generation`, a `snapshotSequence` watermark, and its bounded snapshot. Incremental `agent_event` messages carry the same generation and their extension sequence. Events arriving while the initial history is in flight are bounded and replayed only when they belong to that generation and are newer than the snapshot watermark. If the watched process later publishes a fresh finalized snapshot, the daemon sends another `agent_history` with the same request ID only to watching browsers. Switching sessions replaces the watch. An unavailable or oversized history produces `agent_history_error`. Oversized history is trimmed from the oldest end and reports additional omissions through normal snapshot truncation metadata.
+The response's agent has `historyLoaded: true`, a connection `generation`, a `snapshotSequence` watermark, and its bounded page. Older requests supply `offset`, `limit`, `generation`, and `snapshotSequence`; stale watermarks are rejected so mutable snapshots cannot shift page boundaries underneath a request. Paging does not alter the snapshot's permanent `omittedEntries` count. Incremental `agent_event` messages carry the same generation and their extension sequence. Events arriving while the initial history is in flight are bounded and replayed only when they belong to that generation and are newer than the snapshot watermark. If the watched process later publishes a fresh finalized snapshot, the daemon sends another `agent_history` with the same request ID only to watching browsers. Switching sessions replaces the watch. An unavailable or oversized history produces `agent_history_error`. Oversized history is trimmed from the oldest end and reports additional omissions through normal snapshot truncation metadata.
 
 Incremental messages:
 

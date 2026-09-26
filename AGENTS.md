@@ -73,10 +73,10 @@ When changing Pi integration, verify behavior against the installed Pi version r
 ## Current limitations
 
 - Only currently connected/live Pi processes are shown.
-- The initial browser registry is metadata-only. History is fetched only for the selected `instanceId`, cached in memory for up to three visited sessions, and limited to the latest 200 active-branch entries and a 1.5 MiB encoded budget; the UI reports omitted older entries.
+- The initial browser registry is metadata-only. History is fetched only for the selected `instanceId`, initially in newest-first 40-entry pages, cached in memory for up to three visited sessions, and ultimately limited to the latest 200 active-branch entries and a 1.5 MiB encoded budget; the UI reports omitted older entries.
 - Paired browsers authenticate with per-device credentials in the first WebSocket message; the master-token query parameter remains as a temporary legacy fallback.
 - Extension UI dialogs from other extensions still appear in the terminal, not the browser.
-- No image upload, model picker, thinking-level picker, tree navigation, file browser, or terminal.
+- Image prompts support up to three browser-normalized JPEG attachments on image-capable models. There is no model picker, thinking-level picker, tree navigation, file browser, or terminal.
 - In-progress transient state is not perfectly replayed after disconnection; a fresh snapshot recovers finalized entries.
 - Linux setup can install a systemd user service; LaunchAgent and Home Manager support do not exist yet.
 - Pi extensions do not expose every SDK/RPC event; only register event names present in the installed `ExtensionAPI` typings.

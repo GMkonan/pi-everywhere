@@ -293,7 +293,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       v: 1,
       type: "authenticate",
       credential: token,
-      capabilities: ["lazy-history-v1"],
+      capabilities: ["lazy-history-v1", "paged-history-v1"],
     }));
     await initialBrowserState;
 
@@ -328,7 +328,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       v: 1,
       type: "authenticate",
       credential: token,
-      capabilities: ["lazy-history-v1"],
+      capabilities: ["lazy-history-v1", "paged-history-v1"],
     }));
     const state = await recoveredState;
     assert.equal(state.reset, true);
@@ -470,6 +470,31 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
     reconnectingBrowser.off("message", collectOtherResult);
     assert.equal(otherBrowserReceivedResult, false);
+
+    const imageCommandForB = nextLine(agentB);
+    browser.send(JSON.stringify({
+      v: 1,
+      type: "command",
+      instanceId: "agent-b",
+      commandId: "image-command",
+      command: "prompt",
+      payload: {
+        text: "describe this",
+        behavior: "followUp",
+        images: [{ mimeType: "image/jpeg", data: "/9j/" }],
+      },
+    }));
+    const imageCommand = await imageCommandForB;
+    assert.deepEqual((imageCommand.payload as { images: unknown[] }).images, [
+      { mimeType: "image/jpeg", data: "/9j/" },
+    ]);
+    agentB.write(`${JSON.stringify({
+      v: 1,
+      type: "command_result",
+      instanceId: "agent-b",
+      commandId: "image-command",
+      ok: true,
+    })}\n`);
     reconnectingBrowser.close();
 
     const livenessBrowser = new WebSocket(
