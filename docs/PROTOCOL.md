@@ -94,7 +94,7 @@ On connect, the daemon sends one or more bounded state chunks:
 { "v": 1, "type": "state", "agents": [], "reset": true, "complete": true }
 ```
 
-`reset: true` starts a fresh registry transfer. The browser accumulates later chunks where `reset` is false and finalizes only when `complete` is true. Incremental messages received during a chunked transfer are replayed after the final chunk so they cannot be overwritten by older snapshot data. Oversized per-agent history is trimmed from the oldest end and reports the additional omissions through normal snapshot truncation metadata.
+`reset: true` starts a fresh registry transfer. For a large transfer, the daemon first sends lightweight copies of the live-process index with history entries omitted, allowing the session list to render immediately, and then replaces them with full snapshot chunks where `reset` is false. The browser finalizes when `complete` is true. Incremental messages received during the transfer are replayed after the final chunk so they cannot be overwritten by older snapshot data. Oversized per-agent history is trimmed from the oldest end and reports the additional omissions through normal snapshot truncation metadata.
 
 Incremental messages:
 

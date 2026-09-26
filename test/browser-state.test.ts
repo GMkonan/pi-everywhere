@@ -35,21 +35,25 @@ test("browser state emits one complete reset for an empty registry", () => {
   }]);
 });
 
-test("browser state splits agents into ordered bounded chunks", () => {
-  const first = agent("agent-a", [{ text: "a".repeat(300) }]);
-  const second = agent("agent-b", [{ text: "b".repeat(300) }]);
+test("browser state sends a lightweight index before large ordered chunks", () => {
+  const first = agent("agent-a", [{ text: "a".repeat(1000) }]);
+  const second = agent("agent-b", [{ text: "b".repeat(1000) }]);
   const singleMessage = buildBrowserStateMessages([first], 10_000)[0];
   assert.ok(singleMessage);
   const maximumBytes = bytes(singleMessage) + 10;
 
   const messages = buildBrowserStateMessages([first, second], maximumBytes);
 
-  assert.equal(messages.length, 2);
+  assert.equal(messages.length, 3);
   assert.equal(messages[0]?.reset, true);
   assert.equal(messages[0]?.complete, false);
+  assert.deepEqual(messages[0]?.agents.map((item) => item.instanceId), ["agent-a", "agent-b"]);
+  assert.ok(messages[0]?.agents.every((item) => item.snapshot.entries.length === 0));
   assert.equal(messages[1]?.reset, false);
-  assert.equal(messages[1]?.complete, true);
-  assert.deepEqual(messages.flatMap((message) => message.agents.map((item) => item.instanceId)), [
+  assert.equal(messages[1]?.complete, false);
+  assert.equal(messages[2]?.reset, false);
+  assert.equal(messages[2]?.complete, true);
+  assert.deepEqual(messages.slice(1).flatMap((message) => message.agents.map((item) => item.instanceId)), [
     "agent-a",
     "agent-b",
   ]);
@@ -64,7 +68,8 @@ test("browser state trims oldest snapshot entries when one agent exceeds the fra
   oneEntry.snapshot.omittedEntries = 3;
   const maximumBytes = bytes(buildBrowserStateMessages([oneEntry], 10_000)[0]) + 5;
 
-  const [message] = buildBrowserStateMessages([source], maximumBytes);
+  const messages = buildBrowserStateMessages([source], maximumBytes);
+  const message = messages.at(-1);
   const fitted = message?.agents[0];
 
   assert.ok(message);

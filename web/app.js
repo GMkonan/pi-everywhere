@@ -122,7 +122,10 @@ function handleServerMessage(message) {
       stateSyncing = message.complete === false;
     }
     for (const agent of message.agents ?? []) agents.set(agent.instanceId, agent);
-    if (message.complete === false) return;
+    if (message.complete === false) {
+      renderAgents(true);
+      return;
+    }
     stateSyncing = false;
 
     const selectedMissing = Boolean(selectedId && !agents.has(selectedId));
@@ -198,8 +201,8 @@ function handleServerMessage(message) {
   if (message.type === "error") showSystem(`Bridge error: ${message.error}`);
 }
 
-function renderAgents() {
-  elements.agentCount.textContent = `${agents.size} live`;
+function renderAgents(syncing = false) {
+  elements.agentCount.textContent = syncing ? `${agents.size} loading…` : `${agents.size} live`;
   elements.agents.replaceChildren();
 
   if (agents.size === 0) {

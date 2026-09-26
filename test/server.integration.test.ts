@@ -102,7 +102,7 @@ function nextBrowserMessage(
 
 function nextBrowserState(socket: WebSocket): Promise<Record<string, unknown>> {
   return new Promise((resolveState, reject) => {
-    let agents: unknown[] = [];
+    const agents = new Map<string, Record<string, unknown>>();
     let chunks = 0;
     const timer = setTimeout(() => {
       socket.off("message", onMessage);
@@ -112,12 +112,14 @@ function nextBrowserState(socket: WebSocket): Promise<Record<string, unknown>> {
       const message = JSON.parse(data.toString()) as Record<string, unknown>;
       if (message.type !== "state") return;
       chunks += 1;
-      if (message.reset !== false) agents = [];
-      agents.push(...((message.agents as unknown[] | undefined) ?? []));
+      if (message.reset !== false) agents.clear();
+      for (const agent of (message.agents as Array<Record<string, unknown>> | undefined) ?? []) {
+        agents.set(String(agent.instanceId), agent);
+      }
       if (message.complete === false) return;
       clearTimeout(timer);
       socket.off("message", onMessage);
-      resolveState({ ...message, agents, reset: true, complete: true, chunks });
+      resolveState({ ...message, agents: [...agents.values()], reset: true, complete: true, chunks });
     }
     socket.on("message", onMessage);
   });
@@ -251,7 +253,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     const state = await recoveredState;
     assert.equal(state.reset, true);
     assert.equal(state.complete, true);
-    assert.equal(state.chunks, 2);
+    assert.ok(Number(state.chunks) >= 3);
     const stateAgents = state.agents as Array<{
       instanceId: string;
       lastSeenAt: number;

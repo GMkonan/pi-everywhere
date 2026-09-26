@@ -17,11 +17,29 @@ export function buildBrowserStateMessages(
   if (maximumBytes <= 0) throw new Error("Browser state byte budget must be positive");
   if (agents.length === 0) return [stateMessage([], true, true)];
 
-  const fitted = agents.map((agent) => fitAgent(agent, maximumBytes));
+  const fullChunks = packAgents(
+    agents.map((agent) => fitAgent(agent, maximumBytes)),
+    maximumBytes,
+  );
+  const summaries = agents.map((agent) => fitAgent(withNewestEntries(agent, 0), maximumBytes));
+  const summaryChunks = packAgents(summaries, maximumBytes);
+  const fullBytes = transferBytes(fullChunks);
+  const summaryBytes = transferBytes(summaryChunks);
+  const shouldSendIndexFirst = fullBytes > maximumBytes / 4 && summaryBytes < fullBytes / 2;
+  const chunks = shouldSendIndexFirst ? [...summaryChunks, ...fullChunks] : fullChunks;
+
+  return chunks.map((chunk, index) => stateMessage(
+    chunk,
+    index === 0,
+    index === chunks.length - 1,
+  ));
+}
+
+function packAgents(agents: PublicAgent[], maximumBytes: number): PublicAgent[][] {
   const chunks: PublicAgent[][] = [];
   let current: PublicAgent[] = [];
 
-  for (const agent of fitted) {
+  for (const agent of agents) {
     const candidate = [...current, agent];
     if (current.length > 0 && encodedBytes(stateMessage(candidate, false, false)) > maximumBytes) {
       chunks.push(current);
@@ -31,12 +49,14 @@ export function buildBrowserStateMessages(
     }
   }
   if (current.length > 0) chunks.push(current);
+  return chunks;
+}
 
-  return chunks.map((chunk, index) => stateMessage(
-    chunk,
-    index === 0,
-    index === chunks.length - 1,
-  ));
+function transferBytes(chunks: PublicAgent[][]): number {
+  return chunks.reduce(
+    (total, chunk) => total + encodedBytes(stateMessage(chunk, false, false)),
+    0,
+  );
 }
 
 function fitAgent(agent: PublicAgent, maximumBytes: number): PublicAgent {
