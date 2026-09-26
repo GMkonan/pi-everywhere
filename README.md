@@ -21,9 +21,35 @@ Unlike RPC frontends, pi-everywhere does not start a second Pi process or reopen
 - The web UI is installable as a PWA.
 - The daemon is loopback-only and browser access requires a generated token.
 
+## Linux setup from a checkout
+
+Requirements: Node.js 22+, npm, Pi 0.84.1+, and a systemd user session.
+
+```bash
+npm install
+npm run setup
+```
+
+This builds the project, installs the checkout as a global Pi package, and enables `pi-everywhere.service` as a persistent user service. Existing Pi TUIs can then load the extension with `/reload`; new Pi processes load it automatically.
+
+Useful lifecycle checks:
+
+```bash
+npm run status
+npm run doctor
+```
+
+If Tailscale is installed and you explicitly want setup to configure Serve as well:
+
+```bash
+npm run setup -- --tailscale
+```
+
+The server remains on `127.0.0.1:8484`; Tailscale Serve provides private phone access without changing the bind address.
+
 ## Development setup
 
-Requirements: Node.js 22+, npm, and Pi 0.84.1+.
+To run the daemon in the foreground instead of installing the service:
 
 ```bash
 npm install
@@ -31,18 +57,13 @@ npm run check
 npm run dev:server
 ```
 
-The server listens on `http://127.0.0.1:8484`. It prints the paths of its Unix socket and browser token.
-
-In another terminal, install this checkout as a local Pi package:
+Install this checkout as a local Pi package when it is not already registered:
 
 ```bash
 pi install /home/konan/code/projects/pi-everywhere
 ```
 
-Then:
-
-- start a new Pi process, or
-- run `/reload` inside an already-running Pi process.
+Then start a new Pi process or run `/reload` inside an existing one.
 
 The TUI footer should show `everywhere: connected` while the daemon is available.
 
@@ -74,6 +95,9 @@ In the prompt composer, Enter inserts a new line. Use the arrow button or Ctrl/â
 ```bash
 npm run dev          # server with file watching
 npm run dev:server   # server once, through tsx
+npm run setup        # build and install the Linux systemd user service
+npm run status       # report service, daemon, and Tailscale state
+npm run doctor       # diagnose setup problems
 npm run typecheck
 npm run check:web    # syntax-check dependency-free browser modules
 npm test

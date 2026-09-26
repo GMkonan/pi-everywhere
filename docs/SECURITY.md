@@ -17,6 +17,7 @@ A browser that controls pi-everywhere can prompt a Pi agent whose tools may exec
 - Push payloads are generic and contain no prompt, answer, thinking, cwd, or tool content. Browser push providers can still observe delivery timing and endpoint metadata.
 - Maximum extension and WebSocket payload size is 2 MiB.
 - Slow socket/WebSocket consumers are bounded; transient updates may be dropped and persistently congested connections are reconnected.
+- Linux setup writes the systemd user unit with mode `0600` and runs the daemon with `UMask=0077`.
 
 ## Recommended remote access
 

@@ -7,6 +7,6 @@
     "declaration": true,
     "sourceMap": true
   },
-  "include": ["src/server/**/*.ts", "src/shared/**/*.ts"],
+  "include": ["src/cli/**/*.ts", "src/server/**/*.ts", "src/shared/**/*.ts"],
   "exclude": ["src/extension/**", "test/**"]
 }

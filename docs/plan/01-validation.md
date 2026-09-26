@@ -14,7 +14,7 @@ Confirm that the existing architecture is reliable before expanding the product 
   - [x] `/fork`
   - [x] `/clone`
 - [ ] Test browser suspension and reconnection through Tailscale Serve on physical devices:
-  - [x] Android — Galaxy S23 PWA resumed successfully after the phone was locked.
+  - [x] Android — Galaxy S23 Chrome PWA resumed successfully after the phone was locked.
   - [ ] iPhone.
 - [x] Test large, cyclic, and custom tool-event serialization.
 - [x] Cover routing and authentication with two fake agents sharing one `sessionId`, browser state recovery, and socket replacement.
@@ -50,10 +50,10 @@ The current session lifecycle and reconnect behavior are understood, documented,
 
 ### 2026-09-25 — Android physical-device smoke test
 
-- Opened the installed PWA on a Galaxy S23 through Tailscale Serve.
+- Opened the Chrome-installed PWA on a Galaxy S23 through Tailscale Serve.
 - Sent a prompt successfully from the phone, locked the device, and later reopened the PWA.
 - The connection, selected session, and conversation appeared to recover correctly after suspension.
-- Browser/install source still needs to be recorded; iPhone validation remains pending.
+- iPhone validation remains pending.
 
 ## Notes
 

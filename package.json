@@ -15,12 +15,16 @@
     ]
   },
   "bin": {
-    "pi-everywhere": "./dist/src/server/index.js"
+    "pi-everywhere": "./dist/src/cli/index.js"
   },
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
     "dev:server": "tsx src/server/index.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "cli": "tsx src/cli/index.ts",
+    "setup": "npm run build && node dist/src/cli/index.js setup",
+    "status": "node dist/src/cli/index.js status",
+    "doctor": "node dist/src/cli/index.js doctor",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/src/cli/index.js', 0o755)\"",
     "start": "node dist/src/server/index.js",
     "typecheck": "tsc --noEmit",
     "check:web": "node --check web/app.js && node --check web/markdown.js && node --check web/session-list.js && node --check web/sw.js",

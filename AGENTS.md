@@ -40,6 +40,9 @@ npm test
 npm run build
 npm run check
 npm run dev:server
+npm run setup
+npm run status
+npm run doctor
 ```
 
 Manual integration:
@@ -70,7 +73,7 @@ When changing Pi integration, verify behavior against the installed Pi version r
 - Extension UI dialogs from other extensions still appear in the terminal, not the browser.
 - No image upload, model picker, thinking-level picker, tree navigation, file browser, or terminal.
 - In-progress transient state is not perfectly replayed after disconnection; a fresh snapshot recovers finalized entries.
-- No systemd/Home Manager service exists yet.
+- Linux setup can install a systemd user service; LaunchAgent and Home Manager support do not exist yet.
 - Pi extensions do not expose every SDK/RPC event; only register event names present in the installed `ExtensionAPI` typings.
 
 ## Before finishing a change

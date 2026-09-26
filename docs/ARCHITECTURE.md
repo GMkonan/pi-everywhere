@@ -31,7 +31,7 @@ If the daemon is absent, the extension reconnects with exponential backoff cappe
 
 The registry is keyed by a random per-process `instanceId`. A `sessionId` identifies persisted conversation state, not a unique live process, so it is not safe for command routing.
 
-The daemon does not create Pi agents and does not mutate session JSONL files.
+The daemon does not create Pi agents and does not mutate session JSONL files. On Linux, `pi-everywhere setup` installs it as a restart-on-failure systemd user service with a private umask; foreground development remains available separately.
 
 ### PWA
 
