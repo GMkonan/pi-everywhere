@@ -1,6 +1,6 @@
 {
   "name": "pi-everywhere",
-  "short_name": "π everywhere",
+  "short_name": "Everywhere",
   "description": "Control the same live Pi process from your phone and terminal.",
   "start_url": "/",
   "display": "standalone",

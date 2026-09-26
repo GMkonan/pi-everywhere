@@ -109,6 +109,7 @@ button { cursor: pointer; }
 }
 .icon-button:active { background: var(--surface-raised); }
 .icon-button:focus-visible { outline: 2px solid var(--lavender); outline-offset: 1px; }
+.ui-icon { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .notification-button svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .notification-button.active { color: var(--mauve); }
 .notification-button.warning { color: var(--yellow); }
@@ -158,6 +159,7 @@ button { cursor: pointer; }
   font-size: 17px;
 }
 .session-icon.working { border-color: var(--sapphire); color: var(--sapphire); }
+.session-mark { width: 20px; height: 20px; fill: var(--mantle); stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .session-summary { min-width: 0; display: grid; gap: 4px; }
 .session-summary strong,
 .session-summary small {
@@ -426,6 +428,7 @@ button { cursor: pointer; }
   font-size: 22px;
   font-weight: 650;
 }
+.send-button .ui-icon { width: 20px; height: 20px; stroke-width: 2; }
 .send-button:active { transform: scale(.96); }
 
 .toast {

@@ -1,6 +1,9 @@
 <script lang="ts">
-  // This compatibility shell intentionally has no reactive state. The legacy
-  // controller owns these nodes until each behavior moves into Svelte.
+  import Icon from "./components/Icon.svelte";
+  import SessionList from "./components/SessionList.svelte";
+
+  // Most of this compatibility shell intentionally has no reactive state yet.
+  // The session list is the first region owned by Svelte.
 </script>
 
 <main class="app-shell">
@@ -17,19 +20,19 @@
       </div>
       <div class="index-actions">
         <button id="notifications" class="icon-button notification-button" type="button" aria-label="Enable notifications" title="Enable notifications">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+          <Icon name="bell" />
         </button>
-        <button id="change-token" class="icon-button" type="button" aria-label="Change device access" title="Change device access">⌘</button>
-        <button id="close-navigation" class="icon-button" type="button" aria-label="Close sessions" hidden>×</button>
+        <button id="change-token" class="icon-button" type="button" aria-label="Change device access" title="Change device access"><Icon name="key" /></button>
+        <button id="close-navigation" class="icon-button" type="button" aria-label="Close sessions" hidden><Icon name="close" /></button>
       </div>
     </header>
-    <div id="agents" class="session-groups"></div>
+    <SessionList />
   </nav>
 
   <section id="session-view" class="conversation" hidden>
     <header class="conversation-header">
       <button id="open-navigation" class="icon-button hamburger" type="button" aria-label="Open sessions" aria-controls="session-index">
-        <span></span><span></span><span></span>
+        <Icon name="menu" />
       </button>
       <div class="conversation-title">
         <h1 id="session-name">Session</h1>
@@ -48,7 +51,7 @@
       </div>
       <form id="prompt-form" class="composer">
         <textarea id="prompt" rows="1" placeholder="Message Pi…" aria-label="Message Pi" required></textarea>
-        <button type="submit" class="send-button" aria-label="Send message" title="Send message (Ctrl/⌘+Enter)">↑</button>
+        <button type="submit" class="send-button" aria-label="Send message" title="Send message (Ctrl/⌘+Enter)"><Icon name="send" /></button>
       </form>
     </footer>
   </section>

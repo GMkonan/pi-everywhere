@@ -114,6 +114,7 @@ npm run typecheck
 npm run check:web    # validate Svelte and legacy browser modules
 npm run build:web    # build the opt-in Svelte compatibility frontend
 npm test
+npm run test:web     # run Svelte component tests
 npm run build
 npm run check        # typecheck + Svelte/browser checks + tests + builds
 npm start            # run compiled server after npm run build

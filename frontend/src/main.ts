@@ -1,7 +1,9 @@
 import { mount } from "svelte";
 import "../../web/styles.css";
 import App from "./App.svelte";
+import { installUiBridge } from "./lib/ui-bridge";
 
+installUiBridge();
 mount(App, { target: document.body });
 
 // Keep behavior unchanged while the state machine is migrated incrementally.

@@ -37,6 +37,7 @@ Read `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, and `docs/SECURITY.md` before c
 npm install
 npm run typecheck
 npm test
+npm run test:web
 npm run build:web
 npm run build
 npm run check

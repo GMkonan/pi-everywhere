@@ -1,4 +1,4 @@
-const CACHE = "pi-everywhere-svelte-v1";
+const CACHE = "pi-everywhere-svelte-v2";
 const CORE = ["/", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {

@@ -62,6 +62,8 @@ const elements = {
   toast: document.querySelector("#toast"),
 };
 
+globalThis.__PI_EVERYWHERE_SVELTE__?.bindActions({ selectAgent });
+
 async function connect() {
   const credential = currentCredential();
   if (!credential) {
@@ -211,6 +213,15 @@ function handleServerMessage(message) {
 
 function renderAgents(syncing = false) {
   elements.agentCount.textContent = syncing ? `${agents.size} loading…` : `${agents.size} live`;
+  const svelteBridge = globalThis.__PI_EVERYWHERE_SVELTE__;
+  if (svelteBridge) {
+    svelteBridge.renderSessionList({
+      agents: [...agents.values()],
+      selectedId,
+      syncing,
+    });
+    return;
+  }
   elements.agents.replaceChildren();
 
   if (agents.size === 0) {
