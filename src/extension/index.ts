@@ -96,9 +96,10 @@ export default function piEverywhere(pi: ExtensionAPI) {
       onCommand: handleCommand,
       onStatus: (connected) => {
         if (activeContext !== ctx) return;
-        const label = ctx.ui.theme.fg("dim", "everywhere:");
-        const state = ctx.ui.theme.fg(connected ? "success" : "warning", connected ? "connected" : "offline");
-        ctx.ui.setStatus(STATUS_KEY, `${label} ${state}`);
+        const indicator = connected
+          ? ctx.ui.theme.fg("success", "[•ᴗ•]")
+          : `${ctx.ui.theme.fg("error", "[")}${ctx.ui.theme.fg("warning", "•︵•")}${ctx.ui.theme.fg("error", "]")}`;
+        ctx.ui.setStatus(STATUS_KEY, indicator);
       },
     });
     bridge = nextBridge;

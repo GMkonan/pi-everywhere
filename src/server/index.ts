@@ -84,7 +84,17 @@ const historyWatches = new Map<WebSocket, {
   requestId: string;
   pageSize?: number;
 }>();
-const webSocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES });
+const webSocketServer = new WebSocketServer({
+  noServer: true,
+  maxPayload: MAX_PAYLOAD_BYTES,
+  perMessageDeflate: {
+    threshold: 1024,
+    concurrencyLimit: 4,
+    serverNoContextTakeover: true,
+    clientNoContextTakeover: true,
+    zlibDeflateOptions: { level: 3 },
+  },
+});
 
 function sendBrowser(socket: WebSocket, message: unknown, onSent?: () => void): boolean {
   if (socket.readyState !== WebSocket.OPEN) return false;

@@ -18,7 +18,7 @@ Make controlling a live Pi process from a phone feel intentional rather than lik
 
 ## Implementation notes
 
-- Selected histories open with the newest 40 snapshot entries; older pages are loaded explicitly in idle sessions and prepended without jumping the viewport.
+- Selected histories open with the newest 16 snapshot entries; older pages are loaded explicitly and prepended without jumping the viewport. A slow initial request retries once with an eight-entry page.
 - The composer accepts text-only, image-only, or mixed prompts on image-capable models. It normalizes up to three files to metadata-free JPEGs at 1600 px maximum, 300 KiB each, and 900 KiB combined.
 - The daemon and extension revalidate image payloads before Pi receives flat `ImageContent` blocks. Attachments stay in memory and are cleared after sending or changing sessions.
 

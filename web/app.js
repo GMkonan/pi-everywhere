@@ -12,7 +12,10 @@ const DEVICE_CREDENTIAL_KEY = "pi-everywhere-device";
 const LEGACY_TOKEN_KEY = "pi-everywhere-token";
 const MAX_STATE_QUEUE_BYTES = 2 * 1024 * 1024;
 const MAX_HISTORY_CACHE = 3;
-const HISTORY_PAGE_SIZE = 40;
+const HISTORY_PAGE_SIZE = 16;
+const HISTORY_RETRY_PAGE_SIZE = 8;
+const HISTORY_REQUEST_TIMEOUT_MS = 20_000;
+const BACKGROUND_RECONNECT_MS = 5_000;
 const WORKING_PHRASES = [
   "Forging code…",
   "Connecting the dots…",
@@ -25,11 +28,15 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 const agents = new Map();
 let socket;
 let reconnectTimer;
+let connectionEpoch = 0;
 let selectedId;
 let selectedRemovalTimer;
 let activeHistoryRequest;
 let olderHistoryRequest;
 let historyCacheOrder = [];
+let stateResetCache;
+let backgroundedAt;
+let settingsNavigationWasOpen = true;
 let restoreSelectedOnReconnect = false;
 let reconnectEnabled = true;
 let stateSyncing = false;
@@ -50,6 +57,13 @@ const elements = {
   navigation: document.querySelector("#session-index"),
   openNavigation: document.querySelector("#open-navigation"),
   closeNavigation: document.querySelector("#close-navigation"),
+  openSettings: document.querySelector("#open-settings"),
+  closeSettings: document.querySelector("#close-settings"),
+  settings: document.querySelector("#settings-view"),
+  settingsConnection: document.querySelector("#settings-connection-status"),
+  settingsConnectionDot: document.querySelector("#settings-connection-dot"),
+  reconnect: document.querySelector("#reconnect"),
+  clearHistoryCache: document.querySelector("#clear-history-cache"),
   view: document.querySelector("#session-view"),
   name: document.querySelector("#session-name"),
   meta: document.querySelector("#session-meta"),
@@ -71,6 +85,7 @@ const elements = {
 globalThis.__PI_EVERYWHERE_SVELTE__?.bindActions({ selectAgent, loadOlderHistory, sendPrompt });
 
 async function connect() {
+  const epoch = ++connectionEpoch;
   const credential = currentCredential();
   if (!credential) {
     if (!elements.tokenDialog.open) elements.tokenDialog.showModal();
@@ -84,6 +99,7 @@ async function connect() {
       headers: { authorization: `Bearer ${credential}` },
       cache: "no-store",
     });
+    if (epoch !== connectionEpoch) return;
     if (response.status === 401) {
       reconnectEnabled = false;
       clearStoredCredentials();
@@ -94,15 +110,18 @@ async function connect() {
     if (!response.ok) throw new Error(`Authentication check failed: ${response.status}`);
     void refreshNotificationState(true);
   } catch {
+    if (epoch !== connectionEpoch) return;
     setConnection("offline");
     if (reconnectEnabled) reconnectTimer = setTimeout(() => void connect(), 2000);
     return;
   }
 
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  socket = new WebSocket(`${scheme}//${location.host}/ws`);
-  socket.addEventListener("open", () => {
-    socket.send(JSON.stringify({
+  const nextSocket = new WebSocket(`${scheme}//${location.host}/ws`);
+  socket = nextSocket;
+  nextSocket.addEventListener("open", () => {
+    if (epoch !== connectionEpoch) return;
+    nextSocket.send(JSON.stringify({
       v: PROTOCOL_VERSION,
       type: "authenticate",
       credential,
@@ -111,16 +130,28 @@ async function connect() {
         : ["lazy-history-v1"],
     }));
   });
-  socket.addEventListener("message", ({ data }) => {
+  nextSocket.addEventListener("message", ({ data }) => {
+    if (epoch !== connectionEpoch) return;
     try { handleServerMessage(JSON.parse(data)); }
     catch { showSystem("Received an invalid message from the server."); }
   });
-  socket.addEventListener("close", () => {
-    activeHistoryRequest = undefined;
-    olderHistoryRequest = undefined;
+  nextSocket.addEventListener("close", () => {
+    if (epoch !== connectionEpoch) return;
+    clearHistoryRequests();
+    socket = undefined;
     setConnection("offline");
     if (reconnectEnabled) reconnectTimer = setTimeout(() => void connect(), 2000);
   });
+}
+
+function restartConnection() {
+  clearTimeout(reconnectTimer);
+  connectionEpoch += 1;
+  clearHistoryRequests();
+  const previousSocket = socket;
+  socket = undefined;
+  previousSocket?.close();
+  if (reconnectEnabled) void connect();
 }
 
 function handleServerMessage(message) {
@@ -141,19 +172,23 @@ function handleServerMessage(message) {
   }
   if (message.type === "state") {
     if (message.reset !== false) {
+      stateResetCache = new Map(agents);
       agents.clear();
-      historyCacheOrder = [];
-      olderHistoryRequest = undefined;
+      clearHistoryRequests();
       queuedServerMessages = [];
       queuedServerMessageBytes = 0;
       stateSyncing = message.complete === false;
     }
-    for (const agent of message.agents ?? []) agents.set(agent.instanceId, agent);
+    for (const agent of message.agents ?? []) {
+      agents.set(agent.instanceId, mergeCachedHistory(agent, stateResetCache?.get(agent.instanceId)));
+    }
     if (message.complete === false) {
       renderAgents(true);
       return;
     }
     stateSyncing = false;
+    stateResetCache = undefined;
+    historyCacheOrder = historyCacheOrder.filter((instanceId) => agents.has(instanceId));
 
     const selectedMissing = Boolean(selectedId && !agents.has(selectedId));
     if (selectedMissing) scheduleSelectedRemoval(selectedId, true);
@@ -190,12 +225,16 @@ function handleServerMessage(message) {
       message.agent.historyHasOlder = previous.historyHasOlder;
       message.agent.historyLoadedCount = previous.historyLoadedCount;
       message.agent.historyLoadingOlder = previous.historyLoadingOlder;
+    } else if (sameSession) {
+      message.agent.historyLoading = previous?.historyLoading;
+      message.agent.historyLoadError = previous?.historyLoadError;
     }
     if (activeHistoryRequest?.instanceId === message.agent.instanceId && activeHistoryRequest.generation !== message.agent.generation) {
       activeHistoryRequest.generation = message.agent.generation;
       activeHistoryRequest.awaiting = true;
       activeHistoryRequest.events = [];
       activeHistoryRequest.eventBytes = 0;
+      if (olderHistoryRequest) clearTimeout(olderHistoryRequest.timeout);
       olderHistoryRequest = undefined;
     }
     agents.set(message.agent.instanceId, message.agent);
@@ -213,13 +252,23 @@ function handleServerMessage(message) {
     if (olderHistoryRequest?.instanceId === message.instanceId && olderHistoryRequest.requestId === message.requestId) {
       const previous = agents.get(message.instanceId);
       const request = olderHistoryRequest;
+      clearTimeout(request.timeout);
       olderHistoryRequest = undefined;
       if (!previous
         || selectedId !== message.instanceId
         || !previous.meta.idle
         || previous.generation !== message.agent?.generation
         || previous.snapshotSequence !== message.agent?.snapshotSequence
-        || message.page?.offset !== request.offset) return;
+        || message.page?.offset !== request.offset) {
+        if (previous) {
+          previous.historyLoadingOlder = false;
+          previous.historyPreserve = true;
+          renderSelected();
+          previous.historyPreserve = false;
+        }
+        showToast("History changed while loading. Try again.");
+        return;
+      }
       previous.snapshot = {
         ...previous.snapshot,
         entries: [...(message.agent.snapshot?.entries ?? []), ...(previous.snapshot?.entries ?? [])],
@@ -238,13 +287,22 @@ function handleServerMessage(message) {
     if (!previous
       || previous.meta?.sessionId !== message.agent?.meta?.sessionId
       || previous.generation !== message.agent?.generation
-      || activeHistoryRequest.generation !== message.agent?.generation) return;
+      || activeHistoryRequest.generation !== message.agent?.generation) {
+      if (selectedId === message.instanceId) requestHistory(message.instanceId, true);
+      return;
+    }
+    clearTimeout(activeHistoryRequest.timeout);
     const queuedEvents = activeHistoryRequest.awaiting ? activeHistoryRequest.events : [];
-    if (olderHistoryRequest?.instanceId === message.instanceId) olderHistoryRequest = undefined;
+    if (olderHistoryRequest?.instanceId === message.instanceId) {
+      clearTimeout(olderHistoryRequest.timeout);
+      olderHistoryRequest = undefined;
+    }
     const agent = {
       ...message.agent,
       lastActivityAt: Math.max(previous.lastActivityAt ?? 0, message.agent.lastActivityAt ?? 0),
       historyLoaded: true,
+      historyLoading: false,
+      historyLoadError: undefined,
       historyHasOlder: message.page?.hasOlder === true,
       historyLoadedCount: message.page?.count ?? message.agent.snapshot?.entries?.length ?? 0,
       historyLoadingOlder: false,
@@ -265,6 +323,7 @@ function handleServerMessage(message) {
   }
   if (message.type === "agent_history_error") {
     if (olderHistoryRequest?.instanceId === message.instanceId && olderHistoryRequest.requestId === message.requestId) {
+      clearTimeout(olderHistoryRequest.timeout);
       olderHistoryRequest = undefined;
       const agent = agents.get(message.instanceId);
       if (agent) {
@@ -279,18 +338,28 @@ function handleServerMessage(message) {
       return;
     }
     if (activeHistoryRequest?.instanceId !== message.instanceId || activeHistoryRequest.requestId !== message.requestId) return;
+    clearTimeout(activeHistoryRequest.timeout);
     activeHistoryRequest = undefined;
+    const agent = agents.get(message.instanceId);
+    if (agent && !agent.historyLoaded) {
+      agent.historyLoading = false;
+      agent.historyLoadError = message.error || "History could not be loaded.";
+    }
     if (selectedId === message.instanceId) {
       renderSelected();
-      showSystem(message.error || "History could not be loaded.");
+      if (agent?.historyLoaded) showToast(message.error || "History could not be refreshed.");
     }
     return;
   }
   if (message.type === "agent_removed") {
     agents.delete(message.instanceId);
     historyCacheOrder = historyCacheOrder.filter((instanceId) => instanceId !== message.instanceId);
-    if (olderHistoryRequest?.instanceId === message.instanceId) olderHistoryRequest = undefined;
+    if (olderHistoryRequest?.instanceId === message.instanceId) {
+      clearTimeout(olderHistoryRequest.timeout);
+      olderHistoryRequest = undefined;
+    }
     if (activeHistoryRequest?.instanceId === message.instanceId) {
+      clearTimeout(activeHistoryRequest.timeout);
       activeHistoryRequest.awaiting = true;
       activeHistoryRequest.events = [];
       activeHistoryRequest.eventBytes = 0;
@@ -314,6 +383,7 @@ function handleServerMessage(message) {
       if (message.event?.type === "agent_start" && agent.meta.idle) {
         agent.meta.idle = false;
         if (olderHistoryRequest?.instanceId === message.instanceId) {
+          clearTimeout(olderHistoryRequest.timeout);
           olderHistoryRequest = undefined;
           agent.historyLoadingOlder = false;
         }
@@ -434,6 +504,7 @@ function scheduleSelectedRemoval(instanceId, restoreOnReconnect) {
 
 function selectAgent(instanceId) {
   clearSelectedRemoval();
+  clearHistoryRequests();
   selectedId = instanceId;
   renderAgents();
   renderSelected();
@@ -441,10 +512,16 @@ function selectAgent(instanceId) {
   requestHistory(instanceId);
 }
 
-function requestHistory(instanceId) {
+function requestHistory(instanceId, force = false) {
   const agent = agents.get(instanceId);
   if (!agent || socket?.readyState !== WebSocket.OPEN) return;
+  if (!force && activeHistoryRequest?.instanceId === instanceId && activeHistoryRequest.awaiting) return;
+  if (activeHistoryRequest) clearTimeout(activeHistoryRequest.timeout);
   const requestId = crypto.randomUUID();
+  if (!agent.historyLoaded) {
+    agent.historyLoading = true;
+    agent.historyLoadError = undefined;
+  }
   activeHistoryRequest = {
     instanceId,
     requestId,
@@ -452,7 +529,9 @@ function requestHistory(instanceId) {
     awaiting: true,
     events: [],
     eventBytes: 0,
+    retryCount: 0,
   };
+  activeHistoryRequest.timeout = armHistoryTimeout(activeHistoryRequest);
   socket.send(JSON.stringify({
     v: PROTOCOL_VERSION,
     type: "history_request",
@@ -461,6 +540,34 @@ function requestHistory(instanceId) {
     limit: HISTORY_PAGE_SIZE,
   }));
   if (!agent.historyLoaded && selectedId === instanceId) renderSelected();
+}
+
+function armHistoryTimeout(request) {
+  return setTimeout(() => {
+    if (activeHistoryRequest?.requestId !== request.requestId) return;
+    if (request.retryCount === 0 && socket?.readyState === WebSocket.OPEN) {
+      request.retryCount = 1;
+      request.timeout = armHistoryTimeout(request);
+      socket.send(JSON.stringify({
+        v: PROTOCOL_VERSION,
+        type: "history_request",
+        instanceId: request.instanceId,
+        requestId: request.requestId,
+        limit: HISTORY_RETRY_PAGE_SIZE,
+      }));
+      return;
+    }
+    activeHistoryRequest = undefined;
+    const current = agents.get(request.instanceId);
+    if (current && !current.historyLoaded) {
+      current.historyLoading = false;
+      current.historyLoadError = "The connection did not return history in time.";
+    }
+    if (selectedId === request.instanceId) {
+      renderSelected();
+      if (current?.historyLoaded) showToast("History refresh timed out. Showing the cached copy.");
+    }
+  }, HISTORY_REQUEST_TIMEOUT_MS);
 }
 
 function loadOlderHistory(instanceId) {
@@ -474,7 +581,21 @@ function loadOlderHistory(instanceId) {
     || socket?.readyState !== WebSocket.OPEN) return;
   const requestId = crypto.randomUUID();
   const offset = agent.historyLoadedCount ?? agent.snapshot?.entries?.length ?? 0;
-  olderHistoryRequest = { instanceId, requestId, offset };
+  const timeout = setTimeout(() => {
+    if (olderHistoryRequest?.requestId !== requestId) return;
+    olderHistoryRequest = undefined;
+    const current = agents.get(instanceId);
+    if (current) {
+      current.historyLoadingOlder = false;
+      current.historyPreserve = true;
+    }
+    if (selectedId === instanceId) {
+      renderSelected();
+      if (current) current.historyPreserve = false;
+      showToast("Older history timed out. Tap to try again.");
+    }
+  }, HISTORY_REQUEST_TIMEOUT_MS);
+  olderHistoryRequest = { instanceId, requestId, offset, timeout };
   agent.historyLoadingOlder = true;
   agent.historyPreserve = true;
   renderSelected();
@@ -489,6 +610,46 @@ function loadOlderHistory(instanceId) {
     generation: agent.generation,
     snapshotSequence: agent.snapshotSequence,
   }));
+}
+
+function clearHistoryRequests() {
+  if (activeHistoryRequest) clearTimeout(activeHistoryRequest.timeout);
+  if (olderHistoryRequest) {
+    clearTimeout(olderHistoryRequest.timeout);
+    const agent = agents.get(olderHistoryRequest.instanceId);
+    if (agent) agent.historyLoadingOlder = false;
+  }
+  activeHistoryRequest = undefined;
+  olderHistoryRequest = undefined;
+}
+
+function mergeCachedHistory(agent, cached) {
+  if (!cached?.historyLoaded || cached.meta?.sessionId !== agent.meta?.sessionId) return agent;
+  return {
+    ...agent,
+    snapshot: cached.snapshot,
+    historyLoaded: true,
+    historyHasOlder: cached.historyHasOlder,
+    historyLoadedCount: cached.historyLoadedCount,
+    historyLoadingOlder: false,
+  };
+}
+
+function clearHistoryCache() {
+  clearHistoryRequests();
+  historyCacheOrder = [];
+  for (const agent of agents.values()) {
+    agent.snapshot = { ...agent.snapshot, entries: [] };
+    agent.historyLoaded = false;
+    agent.historyLoading = false;
+    agent.historyLoadError = undefined;
+    agent.historyHasOlder = false;
+    agent.historyLoadedCount = 0;
+    agent.historyLoadingOlder = false;
+  }
+  renderSelected();
+  if (selectedId) requestHistory(selectedId, true);
+  showToast("Cached history cleared.");
 }
 
 function rememberHistory(instanceId) {
@@ -510,10 +671,11 @@ function rememberHistory(instanceId) {
 function setNavigation(open) {
   const hasSelectedAgent = Boolean(selectedId && agents.has(selectedId));
   const visible = open || !hasSelectedAgent;
+  const settingsOpen = Boolean(elements.settings && !elements.settings.hidden);
   elements.navigation.classList.toggle("closed", !visible);
   elements.navigation.setAttribute("aria-hidden", String(!visible));
-  elements.navigation.inert = !visible;
-  elements.view.inert = visible;
+  elements.navigation.inert = settingsOpen || !visible;
+  elements.view.inert = settingsOpen || visible;
   elements.view.setAttribute("aria-hidden", String(visible || !hasSelectedAgent));
   elements.closeNavigation.hidden = !hasSelectedAgent;
 }
@@ -537,7 +699,8 @@ function renderSelected() {
       entries: agent.snapshot?.entries ?? [],
       historyTruncated: Boolean(agent.snapshot?.historyTruncated),
       omittedEntries: agent.snapshot?.omittedEntries,
-      loading: !agent.historyLoaded,
+      loading: !agent.historyLoaded && agent.historyLoading !== false,
+      loadError: agent.historyLoadError,
       hasOlder: agent.historyHasOlder === true,
       loadingOlder: agent.historyLoadingOlder === true,
       canLoadOlder: agent.meta.idle,
@@ -549,7 +712,7 @@ function renderSelected() {
   elements.transcript.replaceChildren();
   transcriptState = createTranscriptState();
   if (!agent.historyLoaded) {
-    appendActivityText("Loading history…", { status: true });
+    appendActivityText(agent.historyLoadError || "Loading history…", { status: true, error: Boolean(agent.historyLoadError) });
     syncWorkingIndicator();
     return;
   }
@@ -862,12 +1025,38 @@ if (!globalThis.__PI_EVERYWHERE_SVELTE__) {
   });
   elements.prompt.addEventListener("input", resizePrompt);
 }
+function setSettings(open) {
+  if (!elements.settings) return;
+  if (open) {
+    settingsNavigationWasOpen = !elements.navigation.classList.contains("closed");
+    elements.settings.hidden = false;
+    elements.navigation.inert = true;
+    elements.view.inert = true;
+    elements.closeSettings?.focus();
+    return;
+  }
+  elements.settings.hidden = true;
+  setNavigation(settingsNavigationWasOpen);
+  elements.openSettings?.focus();
+}
+
 elements.openNavigation.addEventListener("click", () => setNavigation(true));
 elements.closeNavigation.addEventListener("click", () => setNavigation(false));
+elements.openSettings?.addEventListener("click", () => setSettings(true));
+elements.closeSettings?.addEventListener("click", () => setSettings(false));
+elements.reconnect?.addEventListener("click", () => {
+  restartConnection();
+  showToast("Reconnecting…");
+});
+elements.clearHistoryCache?.addEventListener("click", clearHistoryCache);
 elements.abort.addEventListener("click", () => sendCommand("abort"));
 elements.changeToken.addEventListener("click", () => {
+  setSettings(false);
   reconnectEnabled = false;
+  connectionEpoch += 1;
+  clearHistoryRequests();
   socket?.close();
+  socket = undefined;
   clearStoredCredentials();
   elements.token.value = "";
   elements.tokenDialog.showModal();
@@ -1084,6 +1273,10 @@ function showToast(text) {
 function setConnection(status) {
   elements.connection.textContent = status;
   elements.connectionDot.className = `connection-dot ${status === "online" ? "online" : "offline"}`;
+  if (elements.settingsConnection) elements.settingsConnection.textContent = status[0].toUpperCase() + status.slice(1);
+  if (elements.settingsConnectionDot) {
+    elements.settingsConnectionDot.className = `connection-dot ${status === "online" ? "online" : "offline"}`;
+  }
   syncWorkingIndicator();
 }
 
@@ -1163,6 +1356,19 @@ function scrollToBottom() {
   elements.transcript.scrollTop = elements.transcript.scrollHeight;
   requestAnimationFrame(() => { elements.transcript.scrollTop = elements.transcript.scrollHeight; });
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    backgroundedAt = Date.now();
+    return;
+  }
+  const slept = backgroundedAt ? Date.now() - backgroundedAt : 0;
+  backgroundedAt = undefined;
+  if (slept >= BACKGROUND_RECONNECT_MS || socket?.readyState !== WebSocket.OPEN) restartConnection();
+});
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) restartConnection();
+});
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 setNavigation(true);

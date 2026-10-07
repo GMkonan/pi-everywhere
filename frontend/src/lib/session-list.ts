@@ -1,5 +1,14 @@
 import type { LiveAgent } from "./types";
 
+const ACTIVITY_EVENTS = new Set([
+  "agent_start",
+  "agent_settled",
+  "message_start",
+  "message_end",
+  "tool_execution_start",
+  "tool_execution_end",
+]);
+
 export interface SessionGroup {
   key: string;
   label: string;
@@ -20,6 +29,17 @@ export function agentActivityAt(agent: LiveAgent): number {
   return Math.max(finiteTimestamp(agent.lastActivityAt) ?? 0, latestEntry)
     || finiteTimestamp(agent.connectedAt)
     || 0;
+}
+
+export function touchAgentActivity(agent: LiveAgent, value: unknown, now = Date.now()): boolean {
+  const event = asRecord(value);
+  if (!event || !ACTIVITY_EVENTS.has(String(event.type))) return false;
+  const message = asRecord(event.message);
+  const timestamp = finiteTimestamp(message?.timestamp)
+    ?? finiteTimestamp(event.timestamp)
+    ?? now;
+  agent.lastActivityAt = Math.max(agentActivityAt(agent), timestamp);
+  return true;
 }
 
 export function groupAgentsByDate(values: Iterable<LiveAgent>, now = Date.now()): SessionGroup[] {

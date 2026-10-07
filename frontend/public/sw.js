@@ -1,5 +1,5 @@
-const CACHE = "pi-everywhere-svelte-v2";
-const CORE = ["/", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "pi-everywhere-svelte-v6";
+const CORE = ["/", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png", "/icon-1024.png", "/icon-maskable-1024-v2.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
@@ -28,7 +28,7 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== location.origin) return;
   const navigation = event.request.mode === "navigate";
   const staticAsset = url.pathname.startsWith("/assets/")
-    || url.pathname === "/icon.svg"
+    || url.pathname.startsWith("/icon")
     || url.pathname === "/manifest.webmanifest";
   if (!navigation && !staticAsset) return;
 
@@ -59,7 +59,7 @@ self.addEventListener("push", (event) => {
 
     await self.registration.showNotification(payload.title || "Pi finished working", {
       body: payload.body || "A Pi session is ready.",
-      icon: "/icon.svg",
+      icon: "/icon-192.png",
       tag: `pi-everywhere:${payload.instanceId}`,
       data: { url: payload.url || "/" },
     });

@@ -25,6 +25,7 @@ export interface TranscriptState {
   nextId: number;
   revision: number;
   loading: boolean;
+  loadError?: string;
   hasOlder: boolean;
   loadingOlder: boolean;
   canLoadOlder: boolean;
@@ -43,6 +44,7 @@ export function buildTranscript(input: ConversationInput): TranscriptState {
     ...emptyTranscriptState(),
     instanceId: input.instanceId,
     loading: input.loading === true,
+    ...(input.loadError ? { loadError: input.loadError } : {}),
     hasOlder: input.hasOlder === true,
     loadingOlder: input.loadingOlder === true,
     canLoadOlder: input.canLoadOlder !== false,

@@ -191,6 +191,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     });
     sockets.push(deviceBrowser);
     await once(deviceBrowser, "open");
+    assert.match(deviceBrowser.extensions, /permessage-deflate/u);
     const deviceAuthenticated = nextBrowserMessage(deviceBrowser, (message) => message.type === "authenticated");
     const deviceState = nextBrowserState(deviceBrowser);
     deviceBrowser.send(JSON.stringify({
@@ -302,7 +303,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       (message.agent as Record<string, unknown> | undefined)?.instanceId === "agent-a"
     );
     const agentA = await connectAgent(socketPath, "agent-a", {
-      entries: [{ type: "custom", data: "a".repeat(1_050_000) }],
+      entries: [{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "a".repeat(1_050_000) }], stopReason: "stop" } }],
     });
     sockets.push(agentA);
     await upsertA;
@@ -312,7 +313,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
       (message.agent as Record<string, unknown> | undefined)?.instanceId === "agent-b"
     );
     const agentB = await connectAgent(socketPath, "agent-b", {
-      entries: [{ type: "custom", data: "b".repeat(1_050_000) }],
+      entries: [{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "b".repeat(1_050_000) }], stopReason: "stop" } }],
     });
     sockets.push(agentB);
     await upsertB;
@@ -367,11 +368,11 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     const historyAgent = history.agent as {
       historyLoaded: boolean;
       snapshotSequence: number;
-      snapshot: { entries: Array<{ data: string }> };
+      snapshot: { entries: Array<{ message: { content: Array<{ text: string }> } }> };
     };
     assert.equal(historyAgent.historyLoaded, true);
     assert.equal(historyAgent.snapshotSequence, 0);
-    assert.equal(historyAgent.snapshot.entries[0]?.data.length, 1_050_000);
+    assert.equal(historyAgent.snapshot.entries[0]?.message.content[0]?.text.length, 1_050_000);
     await new Promise((resolveWait) => setTimeout(resolveWait, 50));
     browser.off("message", collectOtherHistory);
     assert.equal(otherBrowserReceivedHistory, false);
@@ -410,7 +411,7 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
           thinkingLevel: "off",
           idle: true,
         },
-        entries: [{ type: "custom", data: "updated" }],
+        entries: [{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "updated" }], stopReason: "stop" } }],
         capturedAt: Date.now(),
       },
     })}\n`);
@@ -422,10 +423,10 @@ test("daemon authenticates browsers and isolates live processes sharing one sess
     const refreshedHistory = await watchedRefresh;
     const refreshedHistoryAgent = refreshedHistory.agent as {
       snapshotSequence: number;
-      snapshot: { entries: Array<{ data: string }> };
+      snapshot: { entries: Array<{ message: { content: Array<{ text: string }> } }> };
     };
     assert.equal(refreshedHistoryAgent.snapshotSequence, 1);
-    assert.equal(refreshedHistoryAgent.snapshot.entries[0]?.data, "updated");
+    assert.equal(refreshedHistoryAgent.snapshot.entries[0]?.message.content[0]?.text, "updated");
     await new Promise((resolveWait) => setTimeout(resolveWait, 50));
     browser.off("message", collectOtherHistory);
     assert.equal(otherBrowserReceivedHistory, false);

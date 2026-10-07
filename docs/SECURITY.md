@@ -15,7 +15,7 @@ A browser that controls pi-everywhere can prompt a Pi agent whose tools may exec
 - Browser rendering builds allowlisted DOM nodes from Markdown and literal tool text; it never injects untrusted HTML. Links are protocol-restricted and Markdown images are not loaded automatically.
 - Web Push is disabled until a browser explicitly opts in. Subscriptions and the VAPID private key are stored in a `0600` state file under a `0700` directory.
 - Push payloads are generic and contain no prompt, answer, thinking, cwd, or tool content. Browser push providers can still observe delivery timing and endpoint metadata.
-- Maximum extension and WebSocket payload size is 2 MiB.
+- Maximum extension and decompressed WebSocket payload size is 2 MiB. WebSocket compression applies only above 1 KiB and disables context takeover in both directions.
 - Image prompts accept at most three attachments. The browser decodes and re-encodes them as JPEG at no more than 1600 px and 300 KiB each (900 KiB total), stripping original EXIF/GPS metadata; the daemon and extension independently validate canonical base64, JPEG signatures, MIME, count, and byte limits.
 - Slow socket/WebSocket consumers are bounded; transient updates may be dropped and persistently congested connections are reconnected.
 - Linux setup writes the systemd user unit with mode `0600` and runs the daemon with `UMask=0077`.

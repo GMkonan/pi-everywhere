@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { renderMarkdown } from "../../../web/markdown.js";
+  import { renderMarkdown } from "../lib/markdown";
 
   let { text }: { text: string } = $props();
   let root: HTMLDivElement;

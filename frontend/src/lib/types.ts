@@ -1,10 +1,13 @@
 export interface AgentMeta {
+  instanceId?: string;
   cwd: string;
   sessionId?: string;
   idle: boolean;
   pid: number;
   sessionName?: string;
   model?: string;
+  supportsImages?: boolean;
+  thinkingLevel?: string;
 }
 
 export interface AgentSnapshot {
@@ -16,12 +19,20 @@ export interface AgentSnapshot {
 export interface LiveAgent {
   instanceId: string;
   connectedAt: number;
+  lastSeenAt?: number;
   lastActivityAt?: number;
   generation?: number;
   snapshotSequence?: number;
   meta: AgentMeta;
   snapshot?: AgentSnapshot;
   historyLoaded?: boolean;
+  historyLoading?: boolean;
+  historyLoadError?: string;
+  historyHasOlder?: boolean;
+  historyLoadedCount?: number;
+  historyLoadingOlder?: boolean;
+  historyPrepend?: boolean;
+  historyPreserve?: boolean;
 }
 
 export interface SessionListState {
@@ -42,10 +53,27 @@ export interface ComposerState {
   working: boolean;
 }
 
-export interface LegacyUiActions {
-  selectAgent(instanceId: string): void;
-  loadOlderHistory(instanceId: string): void;
-  sendPrompt(payload: { text?: string; images?: BrowserPromptImage[]; behavior: "followUp" | "steer" }): string | undefined;
+export type ConnectionStatus = "offline" | "connecting" | "pairing" | "online";
+
+export interface NotificationState {
+  supported: boolean;
+  active: boolean;
+  warning: boolean;
+  busy: boolean;
+  label: string;
+}
+
+export interface AppUiState {
+  connection: ConnectionStatus;
+  navigationOpen: boolean;
+  settingsOpen: boolean;
+  hasConversation: boolean;
+  conversationName: string;
+  conversationMeta: string;
+  conversationTitle: string;
+  tokenDialogOpen: boolean;
+  toast?: string;
+  notifications: NotificationState;
 }
 
 export interface ConversationInput {
@@ -54,18 +82,9 @@ export interface ConversationInput {
   historyTruncated: boolean;
   omittedEntries?: number;
   loading?: boolean;
+  loadError?: string;
   hasOlder?: boolean;
   loadingOlder?: boolean;
   canLoadOlder?: boolean;
   scrollMode?: "bottom" | "prepend" | "preserve";
-}
-
-export interface SvelteUiBridge {
-  bindActions(actions: LegacyUiActions): void;
-  renderSessionList(state: SessionListState): void;
-  renderConversation(input: ConversationInput): void;
-  applyConversationEvent(event: unknown): void;
-  appendSystemMessage(text: string): void;
-  renderComposer(state: ComposerState): void;
-  resolvePrompt(commandId: string, ok: boolean, error?: string): void;
 }

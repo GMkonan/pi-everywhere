@@ -3,6 +3,10 @@
 </script>
 
 <span class:working class="session-icon" aria-hidden="true">
+  {#if working}
+    <span class="session-pulse"></span>
+    <span class="session-orbit"><i></i><i></i><i></i></span>
+  {/if}
   <svg class="session-mark" viewBox="0 0 24 24">
     <circle cx="6" cy="12" r="2.25" />
     <circle cx="18" cy="7" r="2.25" />

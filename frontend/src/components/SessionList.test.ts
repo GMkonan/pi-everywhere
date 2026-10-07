@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
-import { describe, expect, it, vi } from "vitest";
-import { installUiBridge, sessionListState } from "../lib/ui-bridge";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { sessionListState, setControllerActionOverridesForTest } from "../lib/controller";
 import type { LiveAgent } from "../lib/types";
 import SessionList from "./SessionList.svelte";
 
@@ -15,14 +15,11 @@ function agent(instanceId: string, name: string, idle: boolean, activity: number
 }
 
 describe("SessionList", () => {
-  it("renders live sessions, selection, activity, and routes taps through the bridge", async () => {
+  afterEach(() => setControllerActionOverridesForTest());
+
+  it("renders live sessions, selection, activity, and routes taps through the controller", async () => {
     const selectAgent = vi.fn();
-    installUiBridge();
-    window.__PI_EVERYWHERE_SVELTE__?.bindActions({
-      selectAgent,
-      loadOlderHistory: () => undefined,
-      sendPrompt: () => undefined,
-    });
+    setControllerActionOverridesForTest({ selectSession: selectAgent });
     const now = Date.now();
     sessionListState.set({
       agents: [agent("older", "Older task", true, now - 120_000), agent("working", "Working task", false, now)],
@@ -36,7 +33,10 @@ describe("SessionList", () => {
     const working = screen.getByRole("button", { name: /Working task/u });
     expect(selected).toHaveClass("selected");
     expect(working).not.toHaveClass("selected");
-    expect(screen.getByText(/· working$/u)).toBeInTheDocument();
+    expect(working).toHaveClass("working");
+    expect(screen.getByText("Working")).toBeInTheDocument();
+    expect(working.querySelector(".working-bars")).toBeInTheDocument();
+    expect(working.querySelector(".session-pulse")).toBeInTheDocument();
     expect(document.querySelector(".session-mark")).toBeInTheDocument();
     expect(screen.queryByText("π")).not.toBeInTheDocument();
 

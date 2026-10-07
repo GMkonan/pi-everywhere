@@ -8,6 +8,7 @@ const root = resolve("/tmp/pi-everywhere-web");
 test("static path resolution maps the index and keeps assets inside the web root", () => {
   assert.equal(resolveStaticFile("/", root), resolve(root, "index.html"));
   assert.equal(resolveStaticFile("/assets/app-123.js", root), resolve(root, "assets/app-123.js"));
+  assert.equal(resolveStaticFile("/icon-maskable-1024-v2.png", root), resolve(root, "icon-maskable-1024-v2.png"));
   assert.equal(resolveStaticFile("/%E0%A4%A", root), undefined);
   assert.equal(resolveStaticFile("/private.json", root), undefined);
 });

@@ -14,7 +14,7 @@ Pi TUI + extension(s) ── NDJSON over Unix socket ── daemon ── WebSoc
 - `src/server/`: local bridge daemon. It owns the live-process registry, routes commands, serves the PWA, and authenticates browser WebSockets.
 - `src/shared/`: protocol types, NDJSON framing, and default paths.
 - `frontend/`: production Svelte + TypeScript PWA source, built by Vite into `web-dist/`.
-- `web/`: legacy dependency-free PWA retained temporarily for rollback and reusable safe parser/controller code during migration.
+- `web/`: legacy dependency-free PWA retained only as an explicit rollback build; the production Svelte bundle does not import its controller.
 - `test/`: Node tests run through `tsx`; Svelte component/reducer tests run through Vitest.
 
 Read `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, and `docs/SECURITY.md` before changing transport, process identity, authentication, or session behavior.
@@ -73,7 +73,7 @@ When changing Pi integration, verify behavior against the installed Pi version r
 ## Current limitations
 
 - Only currently connected/live Pi processes are shown.
-- The initial browser registry is metadata-only. History is fetched only for the selected `instanceId`, initially in newest-first 40-entry pages, cached in memory for up to three visited sessions, and ultimately limited to the latest 200 active-branch entries and a 1.5 MiB encoded budget; the UI reports omitted older entries.
+- The initial browser registry is metadata-only. History is fetched only for the selected `instanceId`, initially in newest-first 16-entry pages, projected to transcript-visible fields, compressed on the browser WebSocket above 1 KiB, cached in memory for up to three visited sessions, and ultimately limited to the latest 200 active-branch entries and a 1.5 MiB encoded budget; the UI reports omitted older entries.
 - Paired browsers authenticate with per-device credentials in the first WebSocket message; the master-token query parameter remains as a temporary legacy fallback.
 - Extension UI dialogs from other extensions still appear in the terminal, not the browser.
 - Image prompts support up to three browser-normalized JPEG attachments on image-capable models. There is no model picker, thinking-level picker, tree navigation, file browser, or terminal.

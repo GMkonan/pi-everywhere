@@ -2,7 +2,7 @@
 
 Protocol version: `1`.
 
-The extension/daemon transport is strict LF-delimited JSON (NDJSON) over a Unix stream socket. Browser traffic is one JSON object per WebSocket message. Payloads are capped at 2 MiB.
+The extension/daemon transport is strict LF-delimited JSON (NDJSON) over a Unix stream socket. Browser traffic is one JSON object per WebSocket message. Payloads are capped at 2 MiB. Browsers may negotiate `permessage-deflate` for frames above 1 KiB; both directions disable context takeover.
 
 This document describes the MVP protocol; it is not stable yet.
 
@@ -118,16 +118,16 @@ After authentication, a `lazy-history-v1` browser receives one or more bounded, 
 When a session is selected, the browser requests only that live process's history:
 
 ```json
-{ "v": 1, "type": "history_request", "instanceId": "1234-uuid", "requestId": "request-uuid", "limit": 40 }
+{ "v": 1, "type": "history_request", "instanceId": "1234-uuid", "requestId": "request-uuid", "limit": 16 }
 ```
 
 The daemon responds only to that browser and treats it as the browser's current history watch:
 
 ```json
-{ "v": 1, "type": "agent_history", "instanceId": "1234-uuid", "requestId": "request-uuid", "page": { "offset": 0, "count": 40, "hasOlder": true }, "agent": {} }
+{ "v": 1, "type": "agent_history", "instanceId": "1234-uuid", "requestId": "request-uuid", "page": { "offset": 0, "count": 16, "hasOlder": true }, "agent": {} }
 ```
 
-The response's agent has `historyLoaded: true`, a connection `generation`, a `snapshotSequence` watermark, and its bounded page. Older requests supply `offset`, `limit`, `generation`, and `snapshotSequence`; stale watermarks are rejected so mutable snapshots cannot shift page boundaries underneath a request. Paging does not alter the snapshot's permanent `omittedEntries` count. Incremental `agent_event` messages carry the same generation and their extension sequence. Events arriving while the initial history is in flight are bounded and replayed only when they belong to that generation and are newer than the snapshot watermark. If the watched process later publishes a fresh finalized snapshot, the daemon sends another `agent_history` with the same request ID only to watching browsers. Switching sessions replaces the watch. An unavailable or oversized history produces `agent_history_error`. Oversized history is trimmed from the oldest end and reports additional omissions through normal snapshot truncation metadata.
+The response's agent has `historyLoaded: true`, a connection `generation`, a `snapshotSequence` watermark, and its bounded page. Browser history is a display projection: entries retain only transcript-visible message fields, successful tool-result bodies and user-image base64 are removed, error/tool summaries are bounded, and provider usage metadata is omitted. Rendered assistant/user text and image metadata remain available. Older requests supply `offset`, `limit`, `generation`, and `snapshotSequence`; stale watermarks are rejected so mutable snapshots cannot shift page boundaries underneath a request. Paging does not alter the snapshot's permanent `omittedEntries` count. Incremental `agent_event` messages carry the same generation and their extension sequence. Events arriving while the initial history is in flight are bounded and replayed only when they belong to that generation and are newer than the snapshot watermark. If the watched process later publishes a fresh finalized snapshot, the daemon sends another `agent_history` with the same request ID only to watching browsers. Switching sessions replaces the watch. An unavailable or oversized history produces `agent_history_error`. Oversized history is trimmed from the oldest end and reports additional omissions through normal snapshot truncation metadata.
 
 Incremental messages:
 

@@ -99,6 +99,47 @@ test("paged history returns newest entries first without marking retrievable ent
   assert.equal(newest.agent.snapshot.omittedEntries, 3);
 });
 
+test("browser history strips payloads the transcript never renders", () => {
+  const source = agent("agent", [
+    { type: "message", message: { role: "toolResult", toolCallId: "tool-1", isError: false, content: [{ type: "text", text: "x".repeat(500_000) }] } },
+    { type: "message", message: { role: "user", content: [{ type: "text", text: "look" }, { type: "image", mimeType: "image/jpeg", data: "a".repeat(500_000) }] } },
+    { type: "message", message: { role: "toolResult", toolCallId: "tool-2", isError: true, content: [{ type: "text", text: "failure" }] } },
+    { type: "compaction", tokensBefore: 123_456, summary: "summary".repeat(50_000), details: { huge: "z".repeat(50_000) } },
+    {
+      type: "message",
+      id: "unused-entry-id",
+      timestamp: 123,
+      message: {
+        role: "assistant",
+        provider: "unused-provider",
+        usage: { cacheRead: 999_999 },
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "call-1", name: "write", arguments: { path: "/tmp/file", content: "y".repeat(500_000) } }],
+      },
+    },
+  ]);
+
+  const message = buildBrowserHistoryPage(source, "request", 20_000, 0, 40);
+  const entries = message.agent.snapshot.entries as Array<{ message: Record<string, unknown> }>;
+
+  assert.deepEqual(entries[0]?.message.content, []);
+  assert.deepEqual(entries[1]?.message.content, [
+    { type: "text", text: "look" },
+    { type: "image", mimeType: "image/jpeg" },
+  ]);
+  assert.deepEqual(entries[2]?.message.content, [{ type: "text", text: "failure" }]);
+  assert.deepEqual(entries[3], { type: "compaction", tokensBefore: 123_456 });
+  assert.deepEqual(entries[4], {
+    type: "message",
+    message: {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [{ type: "toolCall", id: "call-1", name: "write", arguments: { path: "/tmp/file" } }],
+    },
+  });
+  assert.ok(bytes(message) < 20_000);
+});
+
 test("on-demand history trims oldest snapshot entries when its frame exceeds the budget", () => {
   const entries = Array.from({ length: 4 }, (_, id) => ({ id, text: "x".repeat(300) }));
   const source = agent("agent", entries);

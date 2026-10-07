@@ -1,4 +1,4 @@
-const CACHE = "pi-everywhere-v7";
+const CACHE = "pi-everywhere-v10";
 const SHELL = [
   "/",
   "/styles.css",
@@ -7,6 +7,10 @@ const SHELL = [
   "/session-list.js",
   "/manifest.webmanifest",
   "/icon.svg",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon-1024.png",
+  "/icon-maskable-1024-v2.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -36,7 +40,7 @@ self.addEventListener("push", (event) => {
 
     await self.registration.showNotification(payload.title || "Pi finished working", {
       body: payload.body || "A Pi session is ready.",
-      icon: "/icon.svg",
+      icon: "/icon-192.png",
       tag: `pi-everywhere:${payload.instanceId}`,
       data: { url: payload.url || "/" },
     });

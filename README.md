@@ -1,134 +1,145 @@
-# pi-everywhere
+<p align="center">
+  <img src="frontend/public/icon-192.png" width="112" height="112" alt="pi-everywhere robot icon" />
+</p>
 
-Use the **same live Pi process** from its terminal UI and from a mobile-friendly web interface.
+<h1 align="center">pi-everywhere</h1>
 
-Unlike RPC frontends, pi-everywhere does not start a second Pi process or reopen a session file. A Pi extension connects the already-running TUI process to a local bridge daemon, so prompts sent from the phone appear in that exact Pi instance.
+<p align="center">
+  Control the <strong>exact Pi process already running in your terminal</strong> from a phone or browser.
+</p>
 
-> Status: early MVP. The protocol and UX will change.
+<p align="center">
+  <strong>Pi TUI</strong> ↔ local bridge ↔ installable mobile PWA
+</p>
 
-## What works
+pi-everywhere adds a second, mobile-friendly interface to your existing [Pi](https://github.com/badlogic/pi-mono) TUI session. It does not start another agent or reopen the same session file in a second process: prompts, streaming output, tools, history, and cancellation stay attached to the live Pi instance you selected.
 
-- Existing Pi TUI processes can join after `/reload`.
-- Full-screen session navigation groups connected processes by activity date and orders each group newest-first.
-- The live-session index loads without downloading every transcript; the selected session opens with its latest 40 entries and can fetch older pages without losing scroll position.
-- Thinking, tool activity, and final answers have separate presentation; final conversation text renders safe Markdown with a Catppuccin Mocha palette.
-- A lightweight animated status above the composer shows when the selected Pi process is working.
-- The mobile composer supports text and up to three privacy-normalized JPEG image attachments when the selected model accepts images.
-- Optional Web Push notifications report when a working session settles, including while an installed PWA is closed.
-- The mobile composer keeps prompting intentionally simple and queues messages with `followUp` while Pi is busy.
-- Prompts go directly to the selected Pi process.
-- Busy sessions support follow-up or steering delivery.
-- The current run can be aborted remotely.
-- The web UI is installable as a PWA.
-- The daemon is loopback-only and browser access requires a generated token.
+> [!IMPORTANT]
+> This is an early Linux-focused project. Browser access can control an AI agent with your user's shell permissions, so keep the daemon private and use Tailscale for remote access.
 
-## Linux setup from a checkout
+## Highlights
 
-Requirements: Node.js 22+, npm, Pi 0.84.1+, and a systemd user session.
+- Switch between all currently connected Pi processes.
+- Read live responses, thinking, tools, safe Markdown, and paged history.
+- Send follow-up prompts and up to three normalized image attachments.
+- Keep a separate in-memory text draft for each session.
+- Stop an active Pi run remotely.
+- Receive optional completion notifications from the installed PWA.
+- Choose between four persistent color themes.
+- Pair browsers with short-lived QR codes and revoke devices later.
+- Preserve the original terminal workflow—the Pi TUI remains the primary process.
+
+## Quick start
+
+### Requirements
+
+- Linux with a systemd user session
+- Node.js 22 or newer
+- npm
+- Pi 0.84.1 or newer
+- [Tailscale](https://tailscale.com/download) for private phone access
+
+### 1. Install
 
 ```bash
+git clone https://github.com/GMkonan/pi-everywhere.git
+cd pi-everywhere
 npm install
-npm run setup
+npm run setup -- --tailscale
 ```
 
-This builds the Svelte PWA and daemon, installs the checkout as a global Pi package, and enables `pi-everywhere.service` as a persistent user service. Existing Pi TUIs can then load the extension with `/reload`; new Pi processes load it automatically. Emergency rollback to the legacy frontend is available with `npm run setup -- --legacy-web`.
+Setup builds the daemon and Svelte PWA, installs this checkout as a Pi package, and starts the `pi-everywhere.service` user service.
 
-Pair a phone with a short-lived, single-use QR code:
+If Tailscale Serve is already configured, `--tailscale` can be omitted. To use the browser only on the same computer, run `npm run setup` and open `http://127.0.0.1:8484`.
+
+### 2. Load the extension
+
+Start a new Pi process. For Pi terminals that were already open during installation, run:
+
+```text
+/reload
+```
+
+The footer robot is green and happy when the bridge is connected: `[•ᴗ•]`.
+
+### 3. Pair your phone
 
 ```bash
 npm run pair
 ```
 
-The installed PWA keeps its own revocable device credential, so the master token does not need to be copied. Manage paired devices with `npm run devices` and `npm run revoke -- <device-id>`.
+Scan the QR code, open the generated HTTPS address, and optionally install the page on your Home Screen. Pairing links are single-use and expire after five minutes.
 
-Useful lifecycle checks:
-
-```bash
-npm run status
-npm run doctor
-```
-
-If Tailscale is installed and you explicitly want setup to configure Serve as well:
+## Everyday commands
 
 ```bash
-npm run setup -- --tailscale
+npm run status                 # service health and phone URL
+npm run doctor                 # diagnose installation problems
+npm run pair                   # pair another browser
+npm run devices                # list paired devices
+npm run revoke -- <device-id>  # revoke a paired device
+npm run setup -- --tailscale   # rebuild, reinstall, and restart
 ```
 
-The server remains on `127.0.0.1:8484`; Tailscale Serve provides private phone access without changing the bind address.
+After pulling a new version, run `npm install` followed by `npm run setup -- --tailscale`.
 
-## Development setup
+## Using the PWA
 
-To run the daemon in the foreground instead of installing the service:
+- Select a live Pi process from **Sessions**.
+- Enter creates a new line; the arrow button or Ctrl/⌘+Enter sends the prompt.
+- Prompts sent while Pi is busy are delivered as follow-ups.
+- The stop icon appears beside the working indicator only while the selected Pi process is active.
+- History is loaded in small pages and cached only in browser memory.
+- Image attachments are resized and converted to bounded JPEGs before being sent.
 
-```bash
-npm install
-npm run check
-npm run dev:server
+## How it works
+
+```text
+Pi TUI + extension
+        │  NDJSON over a Unix socket
+        ▼
+Local bridge daemon
+        │  authenticated WebSocket + HTTP
+        ▼
+Svelte PWA on your browser or phone
 ```
 
-The Svelte frontend is the service default. To run it with the foreground development daemon:
+The extension subscribes to structured Pi events and injects remote prompts with Pi's extension API. The daemon routes commands by live `instanceId`, serves the PWA, and never opens Pi session files for writing.
 
-```bash
-npm run build:web
-PI_EVERYWHERE_WEB_ROOT="$PWD/web-dist" npm run dev:server
-```
+## Security
 
-Install this checkout as a local Pi package when it is not already registered:
-
-```bash
-pi install /home/konan/code/projects/pi-everywhere
-```
-
-Then start a new Pi process or run `/reload` inside an existing one.
-
-The TUI footer should show `everywhere: connected` while the daemon is available.
-
-Open `http://127.0.0.1:8484`. QR pairing is preferred; manual entry of the master token remains available temporarily for migration and development. If `XDG_CONFIG_HOME` is set, state is stored below that directory instead.
-
-## Phone access with Tailscale
-
-Keep the daemon bound to loopback and publish it through Tailscale Serve:
+The HTTP server binds to `127.0.0.1:8484` by default. Do not expose it directly to the public internet. Tailscale Serve is the recommended remote transport:
 
 ```bash
 tailscale serve --bg 8484
 tailscale serve status
 ```
 
-Open the HTTPS URL shown by Tailscale on the phone. Do not expose this service publicly: controlling Pi is effectively equivalent to shell access under your user account.
+Treat paired browser credentials like shell credentials. See [`docs/SECURITY.md`](docs/SECURITY.md) for the threat model and deployment guidance.
 
-Notifications are opt-in from the bell button and require a secure browser context. On iOS/iPadOS, install the PWA to the Home Screen (16.4 or newer). Closed-app delivery uses the browser vendor's push service, so the daemon needs outbound internet access.
-
-In the prompt composer, Enter inserts a new line. Use the arrow button or Ctrl/⌘+Enter to send.
-
-## Commands
+## Development
 
 ```bash
-npm run dev          # server with file watching
-npm run dev:server   # server once, through tsx
-npm run setup        # build and install the Linux systemd user service
-npm run status       # report service, daemon, and Tailscale state
-npm run doctor       # diagnose setup problems
-npm run pair         # create a five-minute, single-use pairing QR code
-npm run devices      # list paired phones/browsers
-npm run revoke -- ID # revoke a device and its push subscription
-npm run typecheck
-npm run check:web    # validate Svelte and legacy browser modules
-npm run build:web    # build the Svelte frontend
-npm test
-npm run test:web     # run Svelte component tests
-npm run build
-npm run check        # typecheck + Svelte/browser checks + tests + builds
-npm start            # run compiled server after npm run build
+npm install
+npm run dev:server     # run the daemon from TypeScript
+npm run build:web      # build the Svelte PWA
+npm run check          # typecheck, tests, and production builds
 ```
 
-## Project documentation
+For a foreground daemon serving the production frontend:
 
-- [`AGENTS.md`](AGENTS.md): concise context and rules for coding agents.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): components and lifecycle.
-- [`docs/PROTOCOL.md`](docs/PROTOCOL.md): wire messages.
-- [`docs/SECURITY.md`](docs/SECURITY.md): threat model and safe exposure.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md): MVP boundary and next steps.
+```bash
+npm run build:web
+PI_EVERYWHERE_WEB_ROOT="$PWD/web-dist" npm run dev:server
+```
 
-## Naming note
+Useful documentation:
 
-The repository/project is called **pi-everywhere**. The unscoped npm name `pi-everywhere` is already owned by an unrelated package, so this package is private and currently named `pi-everywhere-local`. Choose a scope before publishing.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — components and lifecycle
+- [`docs/PROTOCOL.md`](docs/PROTOCOL.md) — bridge protocol
+- [`docs/SECURITY.md`](docs/SECURITY.md) — authentication and exposure
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — current scope and next steps
+
+## Project status
+
+pi-everywhere is an early MVP and its protocol and interface may still change. Automated service installation currently supports Linux/systemd only. The npm package remains private because the unscoped `pi-everywhere` name is owned by an unrelated package; installation from this Git checkout is the supported path.

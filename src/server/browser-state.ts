@@ -146,9 +146,139 @@ function withEntrySlice(agent: PublicAgent, entries: unknown[]): PublicAgent {
     snapshot: {
       ...agent.snapshot,
       meta: { ...agent.snapshot.meta },
-      entries,
+      entries: entries.map(toBrowserEntry).filter((entry) => entry !== undefined),
     },
   };
+}
+
+/** Project history into only the fields consumed by the browser transcript. */
+function toBrowserEntry(value: unknown): unknown {
+  const entry = recordValue(value);
+  if (!entry) return value;
+  if (entry.type === "compaction") {
+    return {
+      type: "compaction",
+      ...(typeof entry.tokensBefore === "number" ? { tokensBefore: entry.tokensBefore } : {}),
+    };
+  }
+  if (entry.type === "branch_summary") {
+    return { type: "branch_summary", summary: truncateText(entry.summary, 20_000) };
+  }
+  if (entry.type !== "message") return typeof entry.type === "string" ? undefined : value;
+  const message = recordValue(entry.message);
+  if (!message || typeof message.role !== "string") return value;
+
+  if (message.role === "user") {
+    return { type: "message", message: { role: "user", content: projectContent(message.content, false) } };
+  }
+  if (message.role === "assistant") {
+    return {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: projectAssistantContent(message.content),
+        ...(typeof message.stopReason === "string" ? { stopReason: message.stopReason } : {}),
+      },
+    };
+  }
+  if (message.role === "toolResult") {
+    const isError = message.isError === true;
+    return {
+      type: "message",
+      message: {
+        role: "toolResult",
+        ...(typeof message.toolCallId === "string" ? { toolCallId: message.toolCallId } : {}),
+        ...(typeof message.toolName === "string" ? { toolName: message.toolName } : {}),
+        ...(isError ? { isError: true, content: projectContent(message.content, true) } : { content: [] }),
+      },
+    };
+  }
+  if (message.role === "bashExecution") {
+    return {
+      type: "message",
+      message: {
+        role: "bashExecution",
+        command: truncateText(message.command, 512),
+      },
+    };
+  }
+  if (message.role === "custom" && message.display !== false) {
+    return {
+      type: "message",
+      message: { role: "custom", content: projectContent(message.content, false), display: true },
+    };
+  }
+  return undefined;
+}
+
+function projectAssistantContent(value: unknown): unknown {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return [];
+  const projected: unknown[] = [];
+  for (const block of value) {
+    const item = recordValue(block);
+    if (!item || typeof item.type !== "string") continue;
+    if (item.type === "text" && typeof item.text === "string") projected.push({ type: "text", text: item.text });
+    else if (item.type === "thinking" && typeof item.thinking === "string") projected.push({ type: "thinking", thinking: item.thinking });
+    else if (item.type === "toolCall") {
+      projected.push({
+        type: "toolCall",
+        ...(typeof item.id === "string" ? { id: item.id } : {}),
+        ...(typeof item.name === "string" ? { name: item.name } : {}),
+        arguments: projectToolArguments(item.name, item.arguments),
+      });
+    }
+  }
+  return projected;
+}
+
+function projectContent(value: unknown, truncate: boolean): unknown {
+  if (typeof value === "string") return truncate ? truncateText(value, 2_000) : value;
+  if (!Array.isArray(value)) return [];
+  const projected: unknown[] = [];
+  for (const block of value) {
+    const item = recordValue(block);
+    if (!item || typeof item.type !== "string") continue;
+    if (item.type === "text" && typeof item.text === "string") {
+      projected.push({ type: "text", text: truncate ? truncateText(item.text, 2_000) : item.text });
+    } else if (item.type === "thinking" && typeof item.thinking === "string") {
+      projected.push({ type: "thinking", thinking: truncate ? truncateText(item.thinking, 2_000) : item.thinking });
+    } else if (item.type === "image") {
+      projected.push({ type: "image", ...(typeof item.mimeType === "string" ? { mimeType: item.mimeType } : {}) });
+    }
+  }
+  return projected;
+}
+
+function projectToolArguments(name: unknown, value: unknown): unknown {
+  const args = recordValue(value);
+  if (!args) return {};
+  const lowered = typeof name === "string" ? name.toLowerCase() : "";
+  const keys = lowered === "bash" || lowered.includes("shell")
+    ? ["command"]
+    : ["read", "write", "edit"].includes(lowered)
+      ? ["path", "filePath", "file_path"]
+      : lowered.includes("search")
+        ? ["query", "queries", "pattern"]
+        : ["path", "command", "query", "url"];
+  const projected: Record<string, unknown> = {};
+  for (const key of keys) {
+    const field = args[key];
+    if (typeof field === "string") projected[key] = truncateText(field, 512);
+    else if (Array.isArray(field)) projected[key] = field.slice(0, 8).map((item) => truncateText(item, 160));
+  }
+  return projected;
+}
+
+function truncateText(value: unknown, maximum: number): string {
+  if (typeof value !== "string") return "";
+  return value.length > maximum ? `${value.slice(0, maximum - 1)}…` : value;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function stateMessage(agents: BrowserStateAgent[], reset: boolean, complete: boolean): BrowserStateMessage {

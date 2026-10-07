@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "description": "Use the same live Pi process from its TUI and a mobile-friendly web interface.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GMkonan/pi-everywhere.git"
+  },
+  "homepage": "https://github.com/GMkonan/pi-everywhere#readme",
+  "bugs": {
+    "url": "https://github.com/GMkonan/pi-everywhere/issues"
+  },
   "type": "module",
   "keywords": [
     "pi-package",

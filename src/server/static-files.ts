@@ -13,6 +13,10 @@ const ROOT_FILES = new Set([
   "manifest.webmanifest",
   "sw.js",
   "icon.svg",
+  "icon-192.png",
+  "icon-512.png",
+  "icon-1024.png",
+  "icon-maskable-1024-v2.png",
 ]);
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -21,6 +25,7 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".map": "application/json; charset=utf-8",
+  ".png": "image/png",
   ".svg": "image/svg+xml",
   ".webmanifest": "application/manifest+json",
 };
